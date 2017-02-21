@@ -1,0 +1,80 @@
+Template: minos-desktop-settings/settings
+Type: multiselect
+Choices: app-desktop, app-purge, compton, dbus-power, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, urxvt, wicd, x11, xdg-user-dirs
+Default: app-desktop, app-purge, compton, dbus-power, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, urxvt, wicd, x11, xdg-user-dirs
+Description: Select the settings to be applied.
+ Minos behavor requires additional settings to fullfill the minos
+ experience, all add-ons can be enabled or disabled by marking the
+ following list
+ .
+ [*] app-desktop: install additional apt packages (Experimental).
+     Eg, ~/.minos/config
+     app-desktop emacs aria2 curl
+ .
+ [*] app-purge: remove apt packages (Experimental).
+     Eg, ~/.minos/config
+     app-purge xinetd sasl2-bin sendmail sendmail-base sendmail-bin sensible-mda
+ .
+ [*] compton: compositor for X11. Performance oriented settings (Optional).
+ .
+ [*] dbus-power: dbus message system. Allow shutdown/reboot through dbus-send
+ (Recommended).
+ .
+ [*] dev-null: Silent noise applications, eg: adobe, macromedia, xsession-error
+ (Optional).
+ .
+ [*] gpg-agent: openpgp encryption and signing tool. Enable ssh support
+ (Recommended).
+ .
+ [*] gtk: gui toolkit. Default theme (Recommended).
+ .
+ [*] groups: add system users to desktop related groups. Audio, automount, network
+ administration, etc (Recommended).
+ .
+ [*] hooks: execute a hook script for every user. The script is called with
+ a 'desktop' parameter and runs as root when defined in /etc/minos/config,
+ otherwise as $user for every user who had define it in ~/.minos/config
+ (Optional).
+     Eg, ~/.minos/config:
+     hook http://domain.tld/hook
+ .
+ [*] i3: tiling window manager. Theme, shortcuts, statusbar, etc (Recommended).
+ .
+ [*] i3status: status bar generator (Optional).
+ .
+ [*] irssi: realtime chat client. Default theme (Optional).
+ .
+ [*] logind-ignore-lid: user login manager. Disable suspend on the lid close event.
+ (Recommended).
+ .
+ [*] mime: mime/app list configuration (Optional).
+ .
+ [*] minos: statusbar/help/autostart settings (Recommended).
+ .
+ [*] mpd: music player. Default music directory (Optional).
+ .
+ [*] mplayer: multimedia player. Fifo controller (Recommended).
+ .
+ [*] mutt: email client. Multiple imap accout email template (Optional).
+ .
+ [*] ncmpcpp: mpd client. Default theme (Optional).
+ .
+ [*] pcmanfm: file manager. Default theme, automount (Recommended).
+ .
+ [*] qt: gui toolkit. Default theme (Recommended).
+ .
+ [*] redshift: eye saviour. Template (Recommended).
+ .
+ [*] slim: simple login manager. Default theme. (Recommended).
+ .
+ [*] urxvt: terminal emulator. Common plugins and default theme. (Recommended).
+ .
+ [*] xdg-user-dirs: disable xdg-user-dirs. (Recommended).
+ .
+ [*] wicd: network connection manager. Netdev group / loopback interface setup,
+ disable network manager (Recommended).
+ .
+ [*] x11: x server. Default theme (Recommended).
+ .
+ If a $HOME/.minos/not_override file exists modules will not alter files on
+ that user directory.

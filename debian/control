@@ -1,0 +1,27 @@
+Source: minos-desktop-settings
+Section: misc
+Priority: extra
+Maintainer: Javier P.L. <chilicuil@ubuntu.com>
+Build-Depends: debhelper (>= 9), dh-exec (>= 0.12)
+Standards-Version: 3.9.4
+Homepage: https://github.com/minos-org/minos-desktop-settings
+Vcs-Git: git://github.com/minos-org/minos-desktop-settings-deb.git
+Vcs-Browser: https://github.com/minos-org/minos-desktop-settings-deb.git
+
+Package: minos-desktop-settings
+Architecture: all
+Depends: ${shlibs:Depends}, ${misc:Depends}, debconf, login, busybox-static
+#                                                     login => because of /bin/su
+Recommends: minos-artwork-core, minos-artwork-extra, minos-core-settings, minos-tools, minos-tools-extra, slim-theme-minos-login
+Description: Minos desktop settings
+ This package provides the settings which gives to minos its identity. It's
+ intended to be installed in desktop environments.
+ .
+ Settings are organized in modules which can be enabled/disabled by system
+ administrators.
+ .
+ If a $HOME/.minos/not_override file exists modules will not alter files on
+ that user directory.
+ .
+ Run $ sudo dpkg-reconfigure minos-desktop-settings to enable/disable options
+ (enabled all by default).

@@ -1,0 +1,12 @@
+minos-desktop-settings (1:201608161048+gitdcfc5de-minos) precise; urgency=low
+
+  * add trusty/xenial packages into lp recipe:
+    https://code.launchpad.net/~minos-archive/+recipe/minos-desktop-settings
+
+ -- Javier P.L. <chilicuil@ubuntu.com>  Tue, 16 Aug 2016 10:48:31 -0500
+
+minos-desktop-settings (1:201602270341+gitdcfc5de-minos) precise; urgency=low
+
+  * New version
+
+ -- Javier P.L. <chilicuil@ubuntu.com>  Mon, 27 Feb 2016 23:20:38 -0500

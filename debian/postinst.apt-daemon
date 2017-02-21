@@ -1,0 +1,861 @@
+#!/bin/sh
+
+#Debconf hook. We don't rely on debconf being present at this time.
+if [ -e /usr/share/debconf/confmodule ];then
+    . /usr/share/debconf/confmodule
+    DEBCONFEXISTS="true"
+    export DEBCONFEXISTS
+else
+    DEBCONFEXISTS="false"
+    export DEBCONFEXISTS
+fi
+
+#close stdout
+#exec 1<&-
+##close stderr
+#exec 2<&-
+##open stdout as $log_file file for read and write.
+#exec 1<> "/tmp/minos-desktop-settings.${$}.debug"
+##redirect stderr to stdout
+#exec 2>&1
+#set -x #enable trace mode
+
+package="minos-desktop-settings"
+users="$(busybox cat /etc/passwd | busybox awk -F: '{if ($3 >= 1000 && $3 < 60000) print $1}')"
+diverge_dir="/usr/share/minos/desktop-settings/diverge"
+
+_diverge_element() {
+    _diverge__orig="${1}"
+    _diverge__new="${2}"
+    _diverge__backup="$(printf "%s\\n" "${_diverge__orig}" | busybox sed 's:/:##:g')"
+
+    if ! LC_ALL=C dpkg-divert --list "${package}" | \
+        grep -xFq "diversion of ${_diverge__orig} to ${diverge_dir}/${_diverge__backup} by ${package}"; then
+        #busybox grep don't support the -x flag in old releases
+        busybox mkdir -p "${diverge_dir}"
+        dpkg-divert --package "${package}" --rename --add \
+            --divert "${diverge_dir}/${_diverge__backup}" "${_diverge__orig}"
+
+        busybox ln -s "${_diverge__new}" "${_diverge__orig}" || :
+    fi
+}
+
+_undiverge_element() {
+    _diverge__orig="${1}"
+    _diverge__new="${2}"
+    _diverge__backup="$(printf "%s\\n" "${_diverge__orig}" | busybox sed 's:/:##:g')"
+
+    if LC_ALL=C dpkg-divert --list "${package}" | \
+        grep -xFq "diversion of ${_diverge__orig} to ${diverge_dir}/${_diverge__backup} by ${package}"; then
+        #busybox grep don't support the -x flag in old releases
+        busybox rm -rf "${_diverge__orig}"
+        dpkg-divert --package "${package}" --rename --remove "${_diverge__orig}"
+        busybox rmdir "${diverge_dir}" 2>/dev/null || :
+    fi
+}
+
+_install_minos_setting() {
+    for setting_file in "${@}"; do
+        setting_file_target="$(busybox basename "${setting_file}")"
+        setting_file_target="$(printf "%s\\n" "/${setting_file_target}" | busybox sed 's:##:/:g')"
+        if [ ! -e "${setting_file_target}" ]; then
+            if [ ! -d "$(busybox dirname "${setting_file_target}")" ]; then
+                busybox mkdir -p "$(busybox dirname "${setting_file_target}")" >/dev/null 2>&1
+            fi
+            busybox ln -s "${setting_file}" "${setting_file_target}"
+        fi
+    done
+}
+
+_uninstall_minos_setting() {
+    for setting_file in "${@}"; do
+        setting_file_target="$(busybox basename "${setting_file}")"
+        setting_file_target="$(printf "%s\\n" "/${setting_file_target}" | busybox sed 's:##:/:g')"
+        busybox rm -rf "${setting_file_target}"
+        busybox rmdir --ignore-fail-on-non-empty "$(busybox dirname "${setting_file_target}")"
+    done
+}
+
+_get_last_file_version() {
+    #get last version of a bunch of .minos-backup.* files
+    [ -z "${1}" ] && return 1
+
+    _getlastversion__files="${1}".minos-backup.*
+    _getlastversion__counter="0"
+
+    for _getlastversion__file in ${_getlastversion__files}; do
+        _getlastversion__counter="$((${_getlastversion__counter} + 1))"
+    done
+
+    if [ "${_getlastversion__counter}" -eq "1" ]; then
+        if [ -e "${_getlastversion__file}" ]; then
+            printf "%s" "${_getlastversion__file}"
+        elif [ -e "${1}" ]; then
+            printf "%s" "${1}"
+        fi
+    else
+        _getlastversion__newer="${_getlastversion__file}"
+        for _getlastversion__file in ${_getlastversion__files}; do
+            if [ "${_getlastversion__file}" -nt "${_getlastversion__newer}" ]; then
+                _getlastversion__newer="${_getlastversion__file}"
+            fi
+        done
+        if [ -e "${_getlastversion__newer}" ]; then
+            printf "%s" "${_getlastversion__newer}"
+        fi
+    fi
+}
+
+_replace_file_on_system_users() {
+    for user in ${users}; do
+        su "${user}" -c "test -f ~/.minos/not_override" && continue
+
+        if su "${user}" -c "test -f ${2}" || su "${user}" -c "test -d ${2}"; then
+            dist_size="$(su "${user}" -c "busybox du -sL ${1}"|busybox cut -f1)"
+            user_size="$(su "${user}" -c "busybox du -sL ${2}"|busybox cut -f1)"
+            if [ X"${dist_size}" = X"${user_size}" ]; then
+                continue
+            else
+            vdotfile="minos-backup.$(busybox date +"%d-%m-%Y-%H:%M")"
+                printf "%s\\n" "${package}: old $user's ${2} archive found, replacing and creating backup to ${2}.${vdotfile}"
+                su "${user}" -c "busybox mv ${2} ${2}.${vdotfile}"
+                su "${user}" -c "busybox cp -rL ${1} ${2}"
+            fi
+        else
+            su "${user}" -c "busybox mkdir -p $(busybox dirname "${2}")"
+            su "${user}" -c "busybox cp -rL ${1} ${2}"
+        fi
+    done
+}
+
+_recover_file_on_system_users() {
+    for user in ${users}; do
+        h="$(su "${user}" -c "echo ~" 2>/dev/null)" || continue
+        su "${user}" -c "test -f ~/.minos/not_override" && continue
+        archive="$(printf "%s\\n" "${1}" | busybox sed "s:\$HOME:${h}:g;s:~/:${h}/:;s:\"::g;s:\'::g;")"
+
+        last_file="$(_get_last_file_version "${archive}")"
+
+        if su "${user}" -c "test -f ${last_file}" || su "${user}" -c "test -d ${last_file}"; then
+            user_size="$(su "${user}" -c "busybox du -sL ${1}"|busybox cut -f1)"
+            last_size="$(su "${user}" -c "busybox du -sL ${last_file}"|busybox cut -f1)"
+            if [ X"${last_size}" = X"${user_size}" ]; then
+                continue
+            else
+                printf "%s\\n" "${package}: old $user's archive found, recovering last version to ${1}"
+                su "${user}" -c "busybox mv ${last_file} ${1}"
+            fi
+        fi
+    done
+}
+
+_ensure_setting_is_set() {
+    #ensure setting($1) is enabled in configuration file($2)
+    # /etc/sysctl.conf
+    # /etc/fstab
+    # ~/.gnupg/gpg.conf
+    [ -z "${1}" ]   && return 1
+    [ -z "${2}" ]   && return 1
+    [ ! -f "${2}" ] && return 1
+
+    _ensuresetting__regex="$(printf   "%s\\n" "${1}" | busybox sed 's: :[ \\t]\\+:g')"
+    _ensuresetting__setting="$(printf "%s\\n" "${1}" | busybox cut -d' ' -f1)"
+
+    if busybox grep "$(printf "^%s" "${_ensuresetting__setting}")" "${2}" >/dev/null; then
+        if ! busybox grep "$(printf "^%s" "${_ensuresetting__regex}")" "${2}" >/dev/null; then
+            busybox sed -i -e "/^${_ensuresetting__setting}/ s:.*:${1}:" "${2}"
+        fi
+    else
+        if busybox grep "$(printf "^#%s[ \t]" "${_ensuresetting__setting}")" "${2}" >/dev/null; then
+            busybox sed -i -e "/^#${_ensuresetting__setting}/ s:#.*:${1}:" "${2}"
+        else
+            busybox sed -i -e "\$ a${1}" "${2}"
+        fi
+    fi
+}
+
+_merge_settings() {
+    [ -f "${1}" ] && [ -f "${2}" ] || return 1
+    setting_file_origin="${1}"
+    setting_file_target="${2}"
+
+    OLDIFS="${IFS}"; IFS='
+'
+    for line in $(busybox cat "${setting_file_origin}"); do
+        if ! busybox grep "^${line}$" "${setting_file_target}" > /dev/null 2>&1; then
+            printf "%s\\n" "${line}" >> "${setting_file_target}"
+        fi
+    done; IFS="${OLDIFS}"
+}
+
+_daemonize() {
+    #http://blog.n01se.net/blog-n01se-net-p-145.html
+    [ -z "${1}" ] && return 1
+    (   #1. fork, to guarantee the child is not a process
+        #group leader, necessary for setsid) and have the
+        #parent exit (to allow control to return to the shell)
+
+        #2. redirect stdin/stdout/stderr before running child
+        [ -t 0 ] && exec  </dev/null
+        [ -t 1 ] && exec  >/dev/null
+        [ -t 2 ] && exec 2>/dev/null
+        if ! command -v "setsid" >/dev/null 2>&1; then
+            #2.1 guard against HUP and INT (in child)
+            trap '' 1 2
+        fi
+
+        #3. ensure cwd isn't a mounted fs so it does't block
+        #umount invocations
+        cd /
+
+        #4. umask (leave this to caller)
+        #umask 0
+
+        #5. close unneeded fds
+        #XCU 2.7 Redirection says: open files are represented by
+        #decimal numbers starting with zero. The largest possible
+        #value is implementation-defined; however, all
+        #implementations shall support at least 0 to 9, inclusive,
+        #for use by the application.
+        i=3; while [ "${i}" -le "9" ]; do
+            eval "exec ${i}>&-"
+            i="$(($i + 1))"
+        done
+
+        #6. create new session, so the child has no
+        #controlling terminal, this prevents the child from
+        #accesing a terminal (using /dev/tty) and getting
+        #signals from the controlling terminal (e.g. HUP, INT)
+        if command -v "setsid" >/dev/null 2>&1; then
+            exec setsid "$@"
+        elif command -v "nohup" >/dev/null 2>&1; then
+            exec nohup "$@" >/dev/null 2>&1
+        else
+            if [ ! -f "${1}" ]; then
+                "$@"
+            else
+                exec "$@"
+            fi
+        fi
+    ) &
+    #2.2 guard against HUP (in parent)
+    if ! command -v "setsid" >/dev/null 2>&1 \ &&
+       ! command -v "nohup"  >/dev/null 2>&1; then
+        disown -h "${!}"
+    fi
+}
+
+_apt_add_queue() {
+    for pkg in "${@}"; do
+        if  busybox grep "${pkg}" /var/lib/apt/apt-rm-queue >/dev/null 2>&1; then
+            busybox sed -i "/^${pkg}$/d" /var/lib/apt/apt-rm-queue
+        else
+            if ! busybox grep "^Package: ${pkg}$" /var/lib/dpkg/status >/dev/null 2>&1; then
+                printf "%s\\n" "${pkg}" >> /var/lib/apt/apt-add-queue
+            fi
+        fi
+    done; unset pkg
+}
+
+_apt_rm_queue() {
+    for pkg in "${@}"; do
+        if  busybox grep "${pkg}" /var/lib/apt/apt-add-queue >/dev/null 2>&1; then
+            busybox sed -i "/^${pkg}$/d" /var/lib/apt/apt-add-queue
+        else
+            if busybox grep "^Package: ${pkg}$" /var/lib/dpkg/status >/dev/null 2>&1; then
+                printf "%s\\n" "${pkg}" >> /var/lib/apt/apt-rm-queue
+            fi
+        fi
+    done; unset pkg
+}
+
+_apt_install() {
+    [ -z "${1}" ] && return
+    _apt_add_queue $(printf "%s\\n" "${@}" | busybox sed "s:${package}::g")
+}
+
+_apt_purge() {
+    [ -z "${1}" ] && return
+    _apt_rm_queue $(printf "%s\\n" "${@}" | busybox sed "s:${package}::g")
+}
+
+_apt_daemon() {
+    [ ! -f /var/lib/apt/apt-add-queue ] && [ ! -f /var/lib/apt/apt-rm-queue ] && return
+
+    _apt_daemon__script="/var/lib/apt/apt-daemon"
+    _apt_daemon_generator() {
+        printf "%s\\n" "#!/bin/sh"
+        printf "%s\\n" "#autogenerated by ${package}: $(date +%d-%m-%Y:%H:%M)"
+        printf "\\n"
+        printf "%s\\n" "if [ -f /var/lib/apt/apt-add-queue ]; then"
+        printf "%s\\n" "  cp /usr/share/debconf/confmodule /usr/share/debconf/confmodule.bk"
+        printf "%s\\n" "  cp /usr/share/minos/debconf/confmodule /usr/share/debconf/confmodule"
+        printf "%s\\n" "  while :; do"
+        printf "%s\\n" "   DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\"
+        printf "%s\\n" "      -o Dpkg::Options::=\"--force-confdef\" \\"
+        printf "%s\\n" "      -o Dpkg::Options::=\"--force-confold\" \\"
+        printf "%s\\n" "      --force-yes \$(cat /var/lib/apt/apt-add-queue) && break"
+        printf "%s\\n" "    sleep 0.1 || sleep 1"
+        printf "%s\\n" "  done"
+        printf "%s\\n" "  mv /usr/share/debconf/confmodule.bk /usr/share/debconf/confmodule"
+        printf "%s\\n" "fi"
+        printf "\\n"
+        printf "%s\\n" "if [ -f /var/lib/apt/apt-rm-queue ]; then"
+        printf "%s\\n" "  cp /usr/share/debconf/confmodule /usr/share/debconf/confmodule.bk"
+        printf "%s\\n" "  cp /usr/share/minos/debconf/confmodule /usr/share/debconf/confmodule"
+        printf "%s\\n" "  while :; do"
+        printf "%s\\n" "    DEBIAN_FRONTEND=noninteractive apt-get purge -y \$(cat /var/lib/apt/apt-rm-queue) && break"
+        printf "%s\\n" "    sleep 0.1 || sleep 1"
+        printf "%s\\n" "  done"
+        printf "%s\\n" "  mv /usr/share/debconf/confmodule.bk /usr/share/debconf/confmodule"
+        printf "%s\\n" "fi"
+        printf "\\n"
+        printf "%s\\n" "mv /var/lib/apt/apt-add-queue /var/lib/apt/apt-add-queue.bk"
+        printf "%s\\n" "mv /var/lib/apt/apt-rm-queue  /var/lib/apt/apt-rm-queue.bk"
+        printf "\\n"
+        printf "%s\\n" "rm -rf /var/lib/apt/apt-add-queue"
+        printf "%s\\n" "rm -rf /var/lib/apt/apt-rm-queue"
+        printf "%s\\n" "rm -rf \"${_apt_daemon__script}\""
+    }
+    _apt_daemon_generator > "${_apt_daemon__script}" && chmod +x "${_apt_daemon__script}"
+    _daemonize /bin/sh   -c "${_apt_daemon__script}"
+    printf "%s\\n" "${package}: package changes will be applied shortly upon completion of this apt/dpkg instance"
+    printf "%s\\n" "${package}: DO NOT POWEROFF the system until it completes"
+}
+
+_enable_setting() {
+    case "${1}" in
+        app-desktop)
+            for user in ${users}; do
+                su "${user}" -c "busybox id | busybox grep '(sudo)\|(admin)\|(wheel)'" >/dev/null 2>&1 || continue
+                h="$(su "${user}" -c "echo ~" 2>/dev/null)" || continue
+
+                userpkgs="$(busybox awk -v pattern="^app-desktop"    \
+                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                    "${h}/.minos/config" 2>/dev/null)"
+
+                [ -z "${userpkgs}" ] && continue
+
+                printf "%s\\n" "${package}: adding to the apt queue, ${user}'s defined pkgs: ${userpkgs} ..."
+                _apt_install ${userpkgs}
+            done
+
+            #this script will be run twice on dpkg-reconfigure invocation
+            #workaround 2nd instance
+            if [ X"$(busybox readlink -f /etc/minos/config)" = X"/usr/share/minos/desktop-settings/etc##minos##config" ]; then
+                change_time="$(perl -le'$,=","; print((stat shift)[9])' /etc/minos/config)"; change_time="${change_time:-0}"
+                now_time="$(busybox date '+%s')"
+                [ "$(($now_time - $change_time))" -lt "1" ] && return 0
+            fi
+
+            globalpkgs="$(busybox awk -v pattern="^app-desktop"      \
+                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                     /etc/minos/config 2>/dev/null)"
+
+            if [ -n "${globalpkgs}" ]; then
+                printf "%s\\n" "${package}: adding to the apt queue, system defined pkgs: ${globalpkgs} ..."
+                _apt_install ${globalpkgs}
+            fi
+            ;;
+
+        app-purge)
+            for user in ${users}; do
+                su "${user}" -c "busybox id | busybox grep '(sudo)\|(admin)\|(wheel)'" >/dev/null 2>&1 || continue
+                h="$(su "${user}" -c "echo ~" 2>/dev/null)" || continue
+
+                rm_userpkgs="$(busybox awk -v pattern="^app-purge"   \
+                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                    "${h}/.minos/config" 2>/dev/null)"
+
+                [ -z "${rm_userpkgs}" ] && continue
+
+                printf "%s\\n" "${package}: removing from the apt queue, ${user}'s defined pkgs: ${rm_userpkgs} ..."
+                _apt_purge ${rm_userpkgs}
+            done
+
+            #this script will be run twice on dpkg-reconfigure invocation
+            #workaround 2nd instance
+            if [ X"$(busybox readlink -f /etc/minos/config)" = X"/usr/share/minos/desktop-settings/etc##minos##config" ]; then
+                change_time="$(perl -le'$,=","; print((stat shift)[9])' /etc/minos/config)"; change_time="${change_time:-0}"
+                now_time="$(busybox date '+%s')"
+                [ "$(($now_time - $change_time))" -lt "1" ] && return 0
+            fi
+
+            rm_globalpkgs="$(busybox awk -v pattern="^app-purge"     \
+                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                     /etc/minos/config 2>/dev/null)"
+
+            if [ -n "${rm_globalpkgs}" ]; then
+                printf "%s\\n" "${package}: removing from the apt queue, system defined pkgs: ${rm_globalpkgs} ..."
+                _apt_purge ${rm_globalpkgs}
+            fi
+            ;;
+
+        compton)
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##xdg##compton.conf'
+            ;;
+
+        dbus-power)
+            _install_minos_setting \
+            '/usr/share/minos/desktop-settings/etc##polkit-1##localauthority##50-local.d##org.freedesktop.consolekit.pkla'
+            ;;
+
+        dev-null)
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##X11##Xsession.d##05minos-noerrfile'
+            for user in ${users}; do
+                su "${user}" -c "test -f ~/.minos/not_override" && continue
+                h="$(su "${user}" -c "echo ~" 2>/dev/null)"     || continue
+
+                su "${user}" -c "busybox rm -rf ~/.adobe      && busybox ln -s /dev/null ~/.adobe"
+                su "${user}" -c "busybox rm -rf ~/.macromedia && busybox ln -s /dev/null ~/.macromedia"
+            done
+            ;;
+
+        gpg-agent)
+            if [ -f /etc/X11/Xsession.d/90gpg-agent ]; then
+                if ! busybox grep -- "--enable-ssh-support" /etc/X11/Xsession.d/90gpg-agent >/dev/null 2>&1; then
+                    busybox sed -i 's/--daemon/--daemon --enable-ssh-support/g' /etc/X11/Xsession.d/90gpg-agent
+                fi
+            fi
+
+            if [ -f /etc/X11/Xsession.options ]; then
+                busybox sed -i 's/^use-ssh-agent/#use-ssh-agent/' /etc/X11/Xsession.options
+            fi
+
+            for user in ${users}; do
+                su "${user}" -c "test -f ~/.minos/not_override"  && continue
+                h="$(su "${user}" -c "echo ~" 2>/dev/null)"      || continue
+                su "${user}" -c "busybox mkdir ~/.gnupg" >/dev/null 2>&1 || :
+                _ensure_setting_is_set "use-agent" "${h}/.gnupg/gpg.conf"
+            done
+            ;;
+
+        gtk)
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.gtkrc-2.0'
+            _replace_file_on_system_users '/etc/skel/.gtkrc-2.0' '~/.gtkrc-2.0'
+
+            for user in ${users}; do
+                su "${user}" -c "test -f ~/.minos/not_override"  && continue
+                h="$(su "${user}" -c "echo ~" 2>/dev/null)"      || continue
+                busybox sed -i "s/muser/${user}/" "${h}/.gtkrc-2.0"
+            done
+            ;;
+
+        groups)
+            for user in ${users}; do
+                usermod -a -G "dialout,sudo,plugdev,audio" "${user}"
+            done
+            ;;
+
+        hooks)
+            globalhook="$(busybox awk -v pattern="^hook"             \
+                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                     /etc/minos/config 2>/dev/null)"
+
+            if [ -n "${globalhook}" ]; then
+                (busybox wget "${globalhook}" -O "/bin/${package}-hook" || \
+                    wget "${globalhook}" -O "/bin/${package}-hook") >/dev/null
+                if [ -f "/bin/${package}-hook" ]; then
+                    busybox chmod +x "/bin/${package}-hook"
+                    printf "%s\\n" "${package}: executing system defined hook: ${globalhook}"
+                    "/bin/${package}-hook" desktop
+                fi
+            fi
+
+            for user in ${users}; do
+                su "${user}" -c "test -f ~/.minos/not_override" && continue
+                h="$(su "${user}" -c "echo ~" 2>/dev/null)"     || continue
+
+                userhook="$(busybox awk -v pattern="^hook"           \
+                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                    "${h}"/.minos/config 2>/dev/null)"
+
+                [ -z "${userhook}" ] && continue
+
+                (su "${user}" -c "busybox wget ${userhook} -O ~/.${package}-hook" || \
+                    su "${user}" -c "wget ${userhook} -O ~/.${package}-hook") >/dev/null
+
+                su "${user}" -c "test -f  ~/.${package}-hook" || continue
+                su "${user}" -c "busybox chmod +x ~/.${package}-hook"
+
+                printf "%s\\n" "${package}: executing $user's defined hook: ${userhook}"
+                su "${user}" -c "~/.${package}-hook desktop"
+            done
+            ;;
+
+        i3)
+            _diverge_element /etc/i3/config  \
+                '/usr/share/minos/desktop-settings/etc##i3##config'
+            ;;
+
+        i3status)
+            _diverge_element /etc/i3status.conf \
+                '/usr/share/minos/desktop-settings/etc##i3status.conf'
+            ;;
+
+        irssi)
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.irssi'
+            _replace_file_on_system_users '/etc/skel/.irssi' '~/.irssi'
+            ;;
+
+        logind-ignore-lid)
+            #http://askubuntu.com/a/361087
+            _diverge_element /etc/systemd/logind.conf \
+                '/usr/share/minos/desktop-settings/etc##systemd##logind.conf'
+            service systemd-logind restart
+            ;;
+
+        mime)
+            _diverge_element /usr/share/applications/defaults.list \
+                '/usr/share/minos/desktop-settings/usr##share##applications##defaults.list'
+            _diverge_element /usr/share/applications/mimeapps.list \
+                '/usr/share/minos/desktop-settings/usr##share##applications##mimeapps.list'
+
+            #_merge_settings /usr/share/applications/defaults.list \
+                #'/usr/share/minos/desktop-settings/usr##share##applications##defaults.list'
+            #_merge_settings /usr/share/applications/mimeapps.list \
+                #'/usr/share/minos/desktop-settings/usr##share##applications##mimeapps.list'
+            update-desktop-database -q || :
+            ;;
+
+        minos)
+            for file in /usr/share/minos/desktop-settings/etc##minos##*; do
+                _install_minos_setting "${file}"
+            done
+            ;;
+
+        mpd)
+            _diverge_element /etc/mpd.conf \
+                '/usr/share/minos/desktop-settings/etc##mpd.conf'
+            ;;
+
+        mplayer)
+            _diverge_element /etc/mplayer/mplayer.conf \
+                '/usr/share/minos/desktop-settings/etc##mplayer##mplayer.conf'
+            ;;
+
+        mutt)
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.mutt'
+            _replace_file_on_system_users '/etc/skel/.mutt' '~/.mutt'
+            ;;
+
+        ncmpcpp)
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.ncmpcpp##config'
+            _replace_file_on_system_users '/etc/skel/.ncmpcpp/config' '~/.ncmpcpp/config'
+            ;;
+
+        pcmanfm)
+            _diverge_element /etc/xdg/libfm/libfm.conf \
+                '/usr/share/minos/desktop-settings/etc##xdg##libfm##libfm.conf'
+            _diverge_element /etc/xdg/pcmanfm/main     \
+                '/usr/share/minos/desktop-settings/etc##xdg##pcmanfm##main'
+            _diverge_element /etc/xdg/pcmanfm/default/pcmanfm.conf \
+                '/usr/share/minos/desktop-settings/etc##xdg##pcmanfm##default##pcmanfm.conf'
+
+            #https://bugs.launchpad.net/ubuntu/+source/policykit-1/+bug/600575
+            DISTRIB_CODENAME="$(busybox awk -F'=' '/DISTRIB_CODENAME/ {print $2}' /etc/lsb-release 2>&1)"
+            case "${DISTRIB_CODENAME}" in
+                #only precise
+                precise)
+                    _install_minos_setting \
+                        '/usr/share/minos/desktop-settings/etc##polkit-1##localauthority##50-local.d##55-storage.pkla'
+                    ;;
+            esac
+            ;;
+
+        qt)
+            _diverge_element /etc/xdg/Trolltech.conf \
+                '/usr/share/minos/desktop-settings/etc##xdg##Trolltech.conf'
+            ;;
+
+        redshift)
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.config##redshift.conf'
+            _replace_file_on_system_users '/etc/skel/.config/redshift.conf' '~/.config/redshift.conf'
+            ;;
+
+        slim)
+            _diverge_element /etc/slim.conf \
+                '/usr/share/minos/desktop-settings/etc##slim.conf'
+            busybox sed -i -e "/default_user/ s:muser:$(busybox awk -F':' '/1000:1000/ {print $1}' /etc/passwd):" /etc/slim.conf
+            ;;
+
+        urxvt)
+            for file in /usr/share/minos/desktop-settings/usr##lib##urxvt##perl##*; do
+                _install_minos_setting "${file}"
+            done
+            update-alternatives --set x-terminal-emulator /usr/bin/urxvt
+            ;;
+
+        wicd)
+            _ensure_setting_is_set "auto lo"                /etc/network/interfaces
+            _ensure_setting_is_set "iface lo inet loopback" /etc/network/interfaces
+
+            for user in ${users}; do
+                usermod -a -G "netdev" "${user}"
+            done
+
+            #disable network-manager
+            if [ -f /etc/init/network-manager.conf ]; then
+                mv /etc/init/network-manager.conf /etc/init/network-manager.conf-disabled
+            fi
+
+            if [ -f /etc/xdg/autostart/nm-applet.desktop ]; then
+                mv /etc/xdg/autostart/nm-applet.desktop /etc/xdg/autostart/nm-applet.desktop.disabled
+            fi
+            ;;
+
+        x11)
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##X11##Xsession.d##05minos-noerrfile'
+
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.Xdefaults'
+            _replace_file_on_system_users '/etc/skel/.Xdefaults' '~/.Xdefaults'
+
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.xsession'
+            _replace_file_on_system_users '/etc/skel/.xsession' '~/.xsession'
+
+            for user in ${users}; do
+                su "${user}" -c "test -f ~/.minos/not_override" && continue
+                su "${user}" -c "test -f ~/.xinitrc" && continue
+                su "${user}" -c "ln -s ~/.xsession ~/.xinitrc"
+            done
+            ;;
+
+        xdg-user-dirs)
+            _diverge_element /etc/xdg/user-dirs.conf \
+                '/usr/share/minos/desktop-settings/etc##xdg##user-dirs.conf'
+            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.config##user-dirs.dirs'
+            _replace_file_on_system_users '/etc/skel/.config/user-dirs.dirs' '~/.config/user-dirs.dirs'
+            ;;
+    esac
+}
+
+_disable_setting() {
+    case "${1}" in
+        app-desktop|app-purge) : ;; #what would be the reverse process?
+
+        compton)
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##xdg##compton.conf'
+            ;;
+
+        dbus-power)
+            _uninstall_minos_setting \
+            '/usr/share/minos/desktop-settings/etc##polkit-1##localauthority##50-local.d##org.freedesktop.consolekit.pkla'
+            ;;
+
+        dev-null)
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##X11##Xsession.d##05minos-noerrfile'
+            for user in ${users}; do
+                su "${user}" -c "test -f ~/.minos/not_override" && continue
+                h="$(su "${user}" -c "echo ~" 2>/dev/null)"     || continue
+
+                su "${user}" -c "busybox rm -rf ~/.adobe"
+                su "${user}" -c "busybox rm -rf ~/.macromedia"
+            done
+            ;;
+
+        gpg-agent)
+            if [ -f /etc/X11/Xsession.d/90gpg-agent ]; then
+                busybox sed -i 's/--daemon --enable-ssh-support/--daemon/g' /etc/X11/Xsession.d/90gpg-agent
+            fi
+
+            if [ -f /etc/X11/Xsession.options ]; then
+                busybox sed -i 's/^#use-ssh-agent/use-ssh-agent/' /etc/X11/Xsession.options
+            fi
+            ;;
+
+        gtk)
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.gtkrc-2.0'
+            _recover_file_on_system_users '~/.gtkrc-2.0'
+            ;;
+
+        groups|hooks) : ;;
+
+        i3)
+            _undiverge_element /etc/i3/config  \
+                '/usr/share/minos/desktop-settings/etc##i3##config'
+            ;;
+
+        i3status)
+            _undiverge_element /etc/i3status.conf \
+                '/usr/share/minos/desktop-settings/etc##i3status.conf'
+            ;;
+
+        irssi)
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.irssi'
+            _recover_file_on_system_users '~/.irssi'
+            ;;
+
+        logind-ignore-lid)
+            #http://askubuntu.com/a/361087
+            _undiverge_element /etc/systemd/logind.conf \
+                '/usr/share/minos/desktop-settings/etc##systemd##logind.conf'
+            service systemd-logind restart
+            ;;
+
+        mime)
+            _undiverge_element /usr/share/applications/defaults.list \
+                '/usr/share/minos/desktop-settings/usr##share##applications##defaults.list'
+            _undiverge_element /usr/share/applications/mimeapps.list \
+                '/usr/share/minos/desktop-settings/usr##share##applications##mimeapps.list'
+
+            #_merge_settings /usr/share/applications/defaults.list \
+                #'/usr/share/minos/desktop-settings/usr##share##applications##defaults.list'
+            #_merge_settings /usr/share/applications/mimeapps.list \
+                #'/usr/share/minos/desktop-settings/usr##share##applications##mimeapps.list'
+            update-desktop-database -q >/dev/null
+            ;;
+
+        minos)
+            for file in /usr/share/minos/desktop-settings/etc##minos##*; do
+                _uninstall_minos_setting "${file}"
+            done
+            ;;
+
+        mpd)
+            _undiverge_element /etc/mpd.conf \
+                '/usr/share/minos/desktop-settings/etc##mpd.conf'
+            ;;
+
+        mplayer)
+            _undiverge_element /etc/mplayer/mplayer.conf \
+                '/usr/share/minos/desktop-settings/etc##mplayer##mplayer.conf'
+            ;;
+
+        mutt)
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.mutt'
+            _recover_file_on_system_users '~/.mutt'
+            ;;
+
+        ncmpcpp)
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.ncmpcpp##config'
+            _recover_file_on_system_users '~/.ncmpcpp/config'
+            ;;
+
+        pcmanfm)
+            _undiverge_element /etc/xdg/libfm/libfm.conf \
+                '/usr/share/minos/desktop-settings/etc##xdg##libfm##libfm.conf'
+            _undiverge_element /etc/xdg/pcmanfm/main     \
+                '/usr/share/minos/desktop-settings/etc##xdg##pcmanfm##main'
+            _undiverge_element /etc/xdg/pcmanfm/default/pcmanfm.conf \
+                '/usr/share/minos/desktop-settings/etc##xdg##pcmanfm##default##pcmanfm.conf'
+
+            #https://bugs.launchpad.net/ubuntu/+source/policykit-1/+bug/600575
+            DISTRIB_CODENAME="$(busybox awk -F'=' '/DISTRIB_CODENAME/ {print $2}' /etc/lsb-release 2>&1)"
+            case "${DISTRIB_CODENAME}" in
+                #only precise
+                precise)
+                    _uninstall_minos_setting \
+                        '/usr/share/minos/desktop-settings/etc##polkit-1##localauthority##50-local.d##55-storage.pkla'
+                    ;;
+            esac
+            ;;
+
+        qt)
+            _undiverge_element /etc/xdg/Trolltech.conf \
+                '/usr/share/minos/desktop-settings/etc##xdg##Trolltech.conf'
+            ;;
+
+        redshift)
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.config##redshift.conf'
+            _recover_file_on_system_users '~/.config/redshift.conf'
+            ;;
+
+        slim)
+            _undiverge_element /etc/slim.conf \
+                '/usr/share/minos/desktop-settings/etc##slim.conf'
+            ;;
+
+        urxvt)
+            for file in /usr/share/minos/desktop-settings/usr##lib##urxvt##perl##*; do
+                _uninstall_minos_setting "${file}"
+            done
+            #update-alternatives --set x-terminal-emulator /usr/bin/urxvt
+            ;;
+
+        wicd)
+            #re-enable network-manager
+            if [ -f /etc/init/network-manager.conf-disabled ]; then
+                mv /etc/init/network-manager.conf-disabled /etc/init/network-manager.conf
+            fi
+
+            if [ -f /etc/xdg/autostart/nm-applet.desktop.disabled ]; then
+                mv /etc/xdg/autostart/nm-applet.desktop.disabled /etc/xdg/autostart/nm-applet.desktop
+            fi
+            ;;
+
+        x11)
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##X11##Xsession.d##05minos-noerrfile'
+
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.Xdefaults'
+            _recover_file_on_system_users '~/.Xdefaults'
+
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.xsession'
+            _recover_file_on_system_users '~/.xsession'
+
+            for user in ${users}; do
+                su "${user}" -c "test -f ~/.minos/not_override" && continue
+                su "${user}" -c "test -h ~/.xinitrc && rm -rf ~/.xinitrc"
+            done
+            ;;
+
+        xdg-user-dirs)
+            _undiverge_element /etc/xdg/user-dirs.conf \
+                '/usr/share/minos/desktop-settings/etc##xdg##user-dirs.conf'
+            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.config##user-dirs.dirs'
+            _recover_file_on_system_users '~/.config/user-dirs.dirs'
+    esac
+}
+
+case "${1}" in
+    configure)
+        if [ "${DEBCONFEXISTS}" = "true" ]; then
+            #get user settings
+            db_get "${package}"/settings
+            settings="${RET}"
+
+            #get default settings
+            db_metaget "${package}"/settings Choices
+            default_settings="${RET}"
+        fi
+
+        #enable selected items
+        for setting in ${settings}; do
+            setting="${setting%,*}" #remove ',' from tail
+            _enable_setting "${setting}"
+
+            default_settings="$(printf "%s\\n" "${default_settings}" | busybox sed 's:'"${setting}"'[, ]*::')"
+        done
+
+        #disable not selected items
+        for not_selected_setting in ${default_settings}; do
+            not_selected_setting="${not_selected_setting%,*}" #remove ',' from tail
+            _disable_setting "${not_selected_setting}"
+        done
+
+        #leave apt daemon running behind to install/remove additional software
+        _apt_daemon
+        ;;
+
+    remove|purge) #abusing postinst to avoid repeating code in postrm
+        if [ "${DEBCONFEXISTS}" = "true" ]; then
+            #get default settings
+            db_metaget "${package}"/settings Choices
+            default_settings="${RET}"
+        fi
+
+        #enable selected items
+        for setting in ${default_settings}; do
+            setting="${setting%,*}" #remove ',' from tail
+            _disable_setting "${setting}"
+        done
+        ;;
+    abort-upgrade|abort-deconfigure|abort-remove)
+        ;;
+    *)
+        printf "%s\\n" "${0} called with unknown argument \`${1}'" 1>&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+exit 0

@@ -1,0 +1,45 @@
+#!/bin/sh
+set -e
+
+#debconf hook. We don't rely on debconf being present at this time.
+if [ -e /usr/share/debconf/confmodule ];then
+    . /usr/share/debconf/confmodule
+    DEBCONFEXISTS="true"
+    export DEBCONFEXISTS
+else
+    DEBCONFEXISTS="false"
+    export DEBCONFEXISTS
+fi
+
+case "${1}" in
+    configure)
+        if [ "$DEBCONFEXISTS" = "true" ]; then
+            #ask questions
+            db_input medium minos-desktop-settings/settings || true
+            #show interface
+            db_go || true
+        fi
+        ;;
+    reconfigure)
+        if [ "$DEBCONFEXISTS" = "true" ]; then
+            #ask questions
+            db_input medium minos-desktop-settings/settings || true
+            #show interface
+            db_go || true
+        fi
+
+        #workaround the hacky way of managing configure/reconfigure in old debconf/dpkg versions
+        #not required on ubuntu 14.04 and above
+        #if [ -f /var/lib/dpkg/info/minos-desktop-settings.postinst ]; then
+            #/var/lib/dpkg/info/minos-desktop-settings.postinst configure
+            #true
+        #fi
+        ;;
+    *)
+        printf "%s\\n" "${0} called with unknown argument \`${1}'" 1>&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+exit 0
