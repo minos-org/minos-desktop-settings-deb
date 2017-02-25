@@ -21,8 +21,10 @@ fi
 #set -x #enable trace mode
 
 package="minos-desktop-settings"
+package_dir="/usr/share/minos/desktop-settings"
+diverge_dir="${package_dir}/diverge"
+
 users="$(busybox cat /etc/passwd | busybox awk -F: '{if ($3 >= 1000 && $3 < 60000) print $1}')"
-diverge_dir="/usr/share/minos/desktop-settings/diverge"
 
 _diverge_element() {
     _diverge__orig="${1}"
@@ -72,6 +74,7 @@ _uninstall_minos_setting() {
         setting_file_target="$(busybox basename "${setting_file}")"
         setting_file_target="$(printf "%s\\n" "/${setting_file_target}" | busybox sed 's:##:/:g')"
         busybox rm -rf "${setting_file_target}"
+        [ -d "$(busybox dirname "${setting_file_target}")" ] && \
         busybox rmdir --ignore-fail-on-non-empty "$(busybox dirname "${setting_file_target}")"
     done
 }
@@ -106,17 +109,18 @@ _get_last_file_version() {
     fi
 }
 
-_replace_file_on_system_users() {
+_install_element_system_users() {
+    test -e "${1}" || return 1
     for user in ${users}; do
         su "${user}" -c "test -f ~/.minos/not_override" && continue
 
-        if su "${user}" -c "test -f ${2}" || su "${user}" -c "test -d ${2}"; then
+        if su "${user}" -c "test -e ${2}"; then
             dist_size="$(su "${user}" -c "busybox du -sL ${1}"|busybox cut -f1)"
             user_size="$(su "${user}" -c "busybox du -sL ${2}"|busybox cut -f1)"
             if [ X"${dist_size}" = X"${user_size}" ]; then
                 continue
             else
-            vdotfile="minos-backup.$(busybox date +"%d-%m-%Y-%H:%M")"
+                vdotfile="minos-backup.$(busybox date +"%d-%m-%Y-%H:%M")"
                 printf "%s\\n" "${package}: old $user's ${2} archive found, replacing and creating backup to ${2}.${vdotfile}"
                 su "${user}" -c "busybox mv ${2} ${2}.${vdotfile}"
                 su "${user}" -c "busybox cp -rL ${1} ${2}"
@@ -128,22 +132,34 @@ _replace_file_on_system_users() {
     done
 }
 
-_recover_file_on_system_users() {
+_uninstall_element_system_users() {
+    test -n "${2}" || return 1
     for user in ${users}; do
-        h="$(su "${user}" -c "echo ~" 2>/dev/null)" || continue
         su "${user}" -c "test -f ~/.minos/not_override" && continue
-        archive="$(printf "%s\\n" "${1}" | busybox sed "s:\$HOME:${h}:g;s:~/:${h}/:;s:\"::g;s:\'::g;")"
 
+        h="$(su "${user}" -c "echo ~" 2>/dev/null)" || continue
+        archive="$(printf "%s\\n" "${2}" | busybox sed "s:\$HOME:${h}:g;s:~/:${h}/:;s:\"::g;s:\'::g;")"
         last_file="$(_get_last_file_version "${archive}")"
 
-        if su "${user}" -c "test -f ${last_file}" || su "${user}" -c "test -d ${last_file}"; then
-            user_size="$(su "${user}" -c "busybox du -sL ${1}"|busybox cut -f1)"
-            last_size="$(su "${user}" -c "busybox du -sL ${last_file}"|busybox cut -f1)"
-            if [ X"${last_size}" = X"${user_size}" ]; then
-                continue
-            else
-                printf "%s\\n" "${package}: old $user's archive found, recovering last version to ${1}"
-                su "${user}" -c "busybox mv ${last_file} ${1}"
+        if test -e "${1}" && su "${user}" -c "test -e ${2}"; then
+            dist_size="$(su "${user}" -c "busybox du -sL ${1}"|busybox cut -f1)"
+            user_size="$(su "${user}" -c "busybox du -sL ${2}"|busybox cut -f1)"
+            if [ X"${dist_size}" = X"${user_size}" ]; then
+                rm -rf "${archive}"
+                busybox rmdir --ignore-fail-on-non-empty "$(busybox dirname "${archive}")"
+            fi
+        fi
+
+        if su "${user}" -c "test -e ${last_file}"; then
+            if su "${user}" -c "test -e ${2}"; then
+                user_size="$(su "${user}" -c "busybox du -sL ${2}"|busybox cut -f1)"
+                last_size="$(su "${user}" -c "busybox du -sL ${last_file}"|busybox cut -f1)"
+                if [ X"${last_size}" = X"${user_size}" ]; then
+                    continue
+                else
+                    printf "%s\\n" "${package}: old $user's archive found, recovering last version to ${2}"
+                    su "${user}" -c "busybox mv ${last_file} ${2}"
+                fi
             fi
         fi
     done
@@ -342,7 +358,7 @@ _enable_setting() {
 
             #this script will be run twice on dpkg-reconfigure invocation
             #workaround 2nd instance
-            if [ X"$(busybox readlink -f /etc/minos/config)" = X"/usr/share/minos/desktop-settings/etc##minos##config" ]; then
+            if [ X"$(busybox readlink -f /etc/minos/config)" = X"${package_dir}/etc##minos##config" ]; then
                 change_time="$(perl -le'$,=","; print((stat shift)[9])' /etc/minos/config)"; change_time="${change_time:-0}"
                 now_time="$(busybox date '+%s')"
                 [ "$(($now_time - $change_time))" -lt "1" ] && return 0
@@ -375,7 +391,7 @@ _enable_setting() {
 
             #this script will be run twice on dpkg-reconfigure invocation
             #workaround 2nd instance
-            if [ X"$(busybox readlink -f /etc/minos/config)" = X"/usr/share/minos/desktop-settings/etc##minos##config" ]; then
+            if [ X"$(busybox readlink -f /etc/minos/config)" = X"${package_dir}/etc##minos##config" ]; then
                 change_time="$(perl -le'$,=","; print((stat shift)[9])' /etc/minos/config)"; change_time="${change_time:-0}"
                 now_time="$(busybox date '+%s')"
                 [ "$(($now_time - $change_time))" -lt "1" ] && return 0
@@ -391,17 +407,15 @@ _enable_setting() {
             fi
             ;;
 
-        compton)
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##xdg##compton.conf'
-            ;;
+        compton) _install_minos_setting "${package_dir}/etc##xdg##compton.conf" ;;
 
         dbus-power)
             _install_minos_setting \
-            '/usr/share/minos/desktop-settings/etc##polkit-1##localauthority##50-local.d##org.freedesktop.consolekit.pkla'
+            "${package_dir}/etc##polkit-1##localauthority##50-local.d##org.freedesktop.consolekit.pkla"
             ;;
 
         dev-null)
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##X11##Xsession.d##05minos-noerrfile'
+            _install_minos_setting "${package_dir}/etc##X11##Xsession.d##05minos-noerrfile"
             for user in ${users}; do
                 su "${user}" -c "test -f ~/.minos/not_override" && continue
                 h="$(su "${user}" -c "echo ~" 2>/dev/null)"     || continue
@@ -431,8 +445,8 @@ _enable_setting() {
             ;;
 
         gtk)
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.gtkrc-2.0'
-            _replace_file_on_system_users '/etc/skel/.gtkrc-2.0' '~/.gtkrc-2.0'
+            _install_minos_setting "${package_dir}/etc##skel##.gtkrc-2.0"
+            _install_element_system_users '/etc/skel/.gtkrc-2.0' '~/.gtkrc-2.0'
 
             for user in ${users}; do
                 su "${user}" -c "test -f ~/.minos/not_override"  && continue
@@ -483,74 +497,64 @@ _enable_setting() {
             done
             ;;
 
-        i3)
-            _diverge_element /etc/i3/config  \
-                '/usr/share/minos/desktop-settings/etc##i3##config'
-            ;;
+        i3) _diverge_element /etc/i3/config "${package_dir}/etc##i3##config" ;;
 
-        i3status)
-            _diverge_element /etc/i3status.conf \
-                '/usr/share/minos/desktop-settings/etc##i3status.conf'
-            ;;
+        i3status) _diverge_element /etc/i3status.conf "${package_dir}/etc##i3status.conf" ;;
 
         irssi)
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.irssi'
-            _replace_file_on_system_users '/etc/skel/.irssi' '~/.irssi'
+            _install_minos_setting "${package_dir}/etc##skel##.irssi"
+            _install_element_system_users '/etc/skel/.irssi' '~/.irssi'
             ;;
 
         logind-ignore-lid)
             #http://askubuntu.com/a/361087
-            _diverge_element /etc/systemd/logind.conf \
-                '/usr/share/minos/desktop-settings/etc##systemd##logind.conf'
+            _diverge_element /etc/systemd/logind.conf "${package_dir}/etc##systemd##logind.conf"
             service systemd-logind restart
             ;;
 
         mime)
             _diverge_element /usr/share/applications/defaults.list \
-                '/usr/share/minos/desktop-settings/usr##share##applications##defaults.list'
+                "${package_dir}/usr##share##applications##defaults.list"
             _diverge_element /usr/share/applications/mimeapps.list \
-                '/usr/share/minos/desktop-settings/usr##share##applications##mimeapps.list'
+                "${package_dir}/usr##share##applications##mimeapps.list"
 
             #_merge_settings /usr/share/applications/defaults.list \
-                #'/usr/share/minos/desktop-settings/usr##share##applications##defaults.list'
+                #"${package_dir}/usr##share##applications##defaults.list"
             #_merge_settings /usr/share/applications/mimeapps.list \
-                #'/usr/share/minos/desktop-settings/usr##share##applications##mimeapps.list'
+                #"${package_dir}/usr##share##applications##mimeapps.list"
             update-desktop-database -q || :
             ;;
 
         minos)
-            for file in /usr/share/minos/desktop-settings/etc##minos##*; do
+            for file in "${package_dir}"/etc##minos##*; do
                 _install_minos_setting "${file}"
             done
             ;;
 
-        mpd)
-            _diverge_element /etc/mpd.conf \
-                '/usr/share/minos/desktop-settings/etc##mpd.conf'
-            ;;
+        mpd) _diverge_element /etc/mpd.conf "${package_dir}/etc##mpd.conf" ;;
 
         mplayer)
             _diverge_element /etc/mplayer/mplayer.conf \
-                '/usr/share/minos/desktop-settings/etc##mplayer##mplayer.conf'
+                "${package_dir}/etc##mplayer##mplayer.conf"
             ;;
 
         mutt)
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.mutt'
-            _replace_file_on_system_users '/etc/skel/.mutt' '~/.mutt'
+            _install_minos_setting "${package_dir}/etc##skel##.mutt"
+            _install_element_system_users '/etc/skel/.mutt' '~/.mutt'
             ;;
 
         ncmpcpp)
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.ncmpcpp##config'
-            _replace_file_on_system_users '/etc/skel/.ncmpcpp/config' '~/.ncmpcpp/config'
+            _install_minos_setting "${package_dir}/etc##skel##.ncmpcpp##config"
+            _install_element_system_users '/etc/skel/.ncmpcpp/config' '~/.ncmpcpp/config'
             ;;
 
         pcmanfm)
             _diverge_element /etc/xdg/libfm/libfm.conf \
-                '/usr/share/minos/desktop-settings/etc##xdg##libfm##libfm.conf'
+                "${package_dir}/etc##xdg##libfm##libfm.conf"
             _diverge_element /etc/xdg/pcmanfm/main     \
-                '/usr/share/minos/desktop-settings/etc##xdg##pcmanfm##main'
+                "${package_dir}/etc##xdg##pcmanfm##main"
             _diverge_element /etc/xdg/pcmanfm/default/pcmanfm.conf \
-                '/usr/share/minos/desktop-settings/etc##xdg##pcmanfm##default##pcmanfm.conf'
+                "${package_dir}/etc##xdg##pcmanfm##default##pcmanfm.conf"
 
             #https://bugs.launchpad.net/ubuntu/+source/policykit-1/+bug/600575
             DISTRIB_CODENAME="$(busybox awk -F'=' '/DISTRIB_CODENAME/ {print $2}' /etc/lsb-release 2>&1)"
@@ -558,29 +562,26 @@ _enable_setting() {
                 #only precise
                 precise)
                     _install_minos_setting \
-                        '/usr/share/minos/desktop-settings/etc##polkit-1##localauthority##50-local.d##55-storage.pkla'
+                        "${package_dir}/etc##polkit-1##localauthority##50-local.d##55-storage.pkla"
                     ;;
             esac
             ;;
 
-        qt)
-            _diverge_element /etc/xdg/Trolltech.conf \
-                '/usr/share/minos/desktop-settings/etc##xdg##Trolltech.conf'
-            ;;
+        qt) _diverge_element /etc/xdg/Trolltech.conf "${package_dir}/etc##xdg##Trolltech.conf" ;;
 
         redshift)
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.config##redshift.conf'
-            _replace_file_on_system_users '/etc/skel/.config/redshift.conf' '~/.config/redshift.conf'
+            _install_minos_setting "${package_dir}/etc##skel##.config##redshift.conf"
+            _install_element_system_users '/etc/skel/.config/redshift.conf' '~/.config/redshift.conf'
             ;;
 
         slim)
-            _diverge_element /etc/slim.conf \
-                '/usr/share/minos/desktop-settings/etc##slim.conf'
-            busybox sed -i -e "/default_user/ s:muser:$(busybox awk -F':' '/1000:1000/ {print $1}' /etc/passwd):" /etc/slim.conf
+            _diverge_element /etc/slim.conf "${package_dir}/etc##slim.conf"
+            busybox sed -i -e \
+                "/default_user/ s:muser:$(busybox awk -F':' '/1000:1000/ {print $1}' /etc/passwd):" /etc/slim.conf
             ;;
 
         urxvt)
-            for file in /usr/share/minos/desktop-settings/usr##lib##urxvt##perl##*; do
+            for file in "${package_dir}"/usr##lib##urxvt##perl##*; do
                 _install_minos_setting "${file}"
             done
             update-alternatives --set x-terminal-emulator /usr/bin/urxvt
@@ -605,13 +606,13 @@ _enable_setting() {
             ;;
 
         x11)
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##X11##Xsession.d##05minos-noerrfile'
+            _install_minos_setting "${package_dir}/etc##X11##Xsession.d##05minos-noerrfile"
 
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.Xdefaults'
-            _replace_file_on_system_users '/etc/skel/.Xdefaults' '~/.Xdefaults'
+            _install_minos_setting "${package_dir}/etc##skel##.Xdefaults"
+            _install_element_system_users '/etc/skel/.Xdefaults' '~/.Xdefaults'
 
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.xsession'
-            _replace_file_on_system_users '/etc/skel/.xsession' '~/.xsession'
+            _install_minos_setting "${package_dir}/etc##skel##.xsession"
+            _install_element_system_users '/etc/skel/.xsession' '~/.xsession'
 
             for user in ${users}; do
                 su "${user}" -c "test -f ~/.minos/not_override" && continue
@@ -621,10 +622,9 @@ _enable_setting() {
             ;;
 
         xdg-user-dirs)
-            _diverge_element /etc/xdg/user-dirs.conf \
-                '/usr/share/minos/desktop-settings/etc##xdg##user-dirs.conf'
-            _install_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.config##user-dirs.dirs'
-            _replace_file_on_system_users '/etc/skel/.config/user-dirs.dirs' '~/.config/user-dirs.dirs'
+            _diverge_element /etc/xdg/user-dirs.conf "${package_dir}/etc##xdg##user-dirs.conf"
+            _install_minos_setting "${package_dir}/etc##skel##.config##user-dirs.dirs"
+            _install_element_system_users '/etc/skel/.config/user-dirs.dirs' '~/.config/user-dirs.dirs'
             ;;
     esac
 }
@@ -633,17 +633,15 @@ _disable_setting() {
     case "${1}" in
         app-desktop|app-purge) : ;; #what would be the reverse process?
 
-        compton)
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##xdg##compton.conf'
-            ;;
+        compton) _uninstall_minos_setting "${package_dir}/etc##xdg##compton.conf" ;;
 
         dbus-power)
             _uninstall_minos_setting \
-            '/usr/share/minos/desktop-settings/etc##polkit-1##localauthority##50-local.d##org.freedesktop.consolekit.pkla'
+            "${package_dir}/etc##polkit-1##localauthority##50-local.d##org.freedesktop.consolekit.pkla"
             ;;
 
         dev-null)
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##X11##Xsession.d##05minos-noerrfile'
+            _uninstall_minos_setting "${package_dir}/etc##X11##Xsession.d##05minos-noerrfile"
             for user in ${users}; do
                 su "${user}" -c "test -f ~/.minos/not_override" && continue
                 h="$(su "${user}" -c "echo ~" 2>/dev/null)"     || continue
@@ -661,83 +659,79 @@ _disable_setting() {
             if [ -f /etc/X11/Xsession.options ]; then
                 busybox sed -i 's/^#use-ssh-agent/use-ssh-agent/' /etc/X11/Xsession.options
             fi
+
+            for user in ${users}; do
+                su "${user}" -c "test -f ~/.minos/not_override"  && continue
+                su "${user}" -c "test -d ~/.gnupg/"  && continue
+                su "${user}" -c "busybox rmdir --ignore-fail-on-non-empty ~/.gnupg"
+            done
             ;;
 
         gtk)
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.gtkrc-2.0'
-            _recover_file_on_system_users '~/.gtkrc-2.0'
+            _uninstall_element_system_users '/etc/skel/.gtkrc-2.0' '~/.gtkrc-2.0'
+            _uninstall_minos_setting "${package_dir}/etc##skel##.gtkrc-2.0"
             ;;
 
         groups|hooks) : ;;
 
-        i3)
-            _undiverge_element /etc/i3/config  \
-                '/usr/share/minos/desktop-settings/etc##i3##config'
-            ;;
+        i3) _undiverge_element /etc/i3/config "${package_dir}/etc##i3##config" ;;
 
-        i3status)
-            _undiverge_element /etc/i3status.conf \
-                '/usr/share/minos/desktop-settings/etc##i3status.conf'
-            ;;
+        i3status) _undiverge_element /etc/i3status.conf "${package_dir}/etc##i3status.conf" ;;
 
         irssi)
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.irssi'
-            _recover_file_on_system_users '~/.irssi'
+            _uninstall_element_system_users '/etc/skel/.irssi' '~/.irssi'
+            _uninstall_minos_setting "${package_dir}/etc##skel##.irssi"
             ;;
 
         logind-ignore-lid)
             #http://askubuntu.com/a/361087
-            _undiverge_element /etc/systemd/logind.conf \
-                '/usr/share/minos/desktop-settings/etc##systemd##logind.conf'
+            _undiverge_element /etc/systemd/logind.conf "${package_dir}/etc##systemd##logind.conf"
             service systemd-logind restart
             ;;
 
         mime)
             _undiverge_element /usr/share/applications/defaults.list \
-                '/usr/share/minos/desktop-settings/usr##share##applications##defaults.list'
+                "${package_dir}/usr##share##applications##defaults.list"
             _undiverge_element /usr/share/applications/mimeapps.list \
-                '/usr/share/minos/desktop-settings/usr##share##applications##mimeapps.list'
+                "${package_dir}/usr##share##applications##mimeapps.list"
 
             #_merge_settings /usr/share/applications/defaults.list \
-                #'/usr/share/minos/desktop-settings/usr##share##applications##defaults.list'
+                #"${package_dir}/usr##share##applications##defaults.list"
             #_merge_settings /usr/share/applications/mimeapps.list \
-                #'/usr/share/minos/desktop-settings/usr##share##applications##mimeapps.list'
+                #"${package_dir}/usr##share##applications##mimeapps.list"
             update-desktop-database -q >/dev/null
             ;;
 
         minos)
-            for file in /usr/share/minos/desktop-settings/etc##minos##*; do
+            for file in "${package_dir}"/etc##minos##*; do
                 _uninstall_minos_setting "${file}"
             done
             ;;
 
-        mpd)
-            _undiverge_element /etc/mpd.conf \
-                '/usr/share/minos/desktop-settings/etc##mpd.conf'
-            ;;
+        mpd) _undiverge_element /etc/mpd.conf "${package_dir}/etc##mpd.conf" ;;
 
         mplayer)
             _undiverge_element /etc/mplayer/mplayer.conf \
-                '/usr/share/minos/desktop-settings/etc##mplayer##mplayer.conf'
+                "${package_dir}/etc##mplayer##mplayer.conf"
             ;;
 
         mutt)
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.mutt'
-            _recover_file_on_system_users '~/.mutt'
+            _uninstall_element_system_users '/etc/skel/.mutt' '~/.mutt'
+            _uninstall_minos_setting "${package_dir}/etc##skel##.mutt"
             ;;
 
         ncmpcpp)
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.ncmpcpp##config'
-            _recover_file_on_system_users '~/.ncmpcpp/config'
+            _uninstall_element_system_users '/etc/skel/.ncmpcpp/config' '~/.ncmpcpp/config'
+            _uninstall_minos_setting "${package_dir}/etc##skel##.ncmpcpp##config"
             ;;
 
         pcmanfm)
             _undiverge_element /etc/xdg/libfm/libfm.conf \
-                '/usr/share/minos/desktop-settings/etc##xdg##libfm##libfm.conf'
+                "${package_dir}/etc##xdg##libfm##libfm.conf"
             _undiverge_element /etc/xdg/pcmanfm/main     \
-                '/usr/share/minos/desktop-settings/etc##xdg##pcmanfm##main'
+                "${package_dir}/etc##xdg##pcmanfm##main"
             _undiverge_element /etc/xdg/pcmanfm/default/pcmanfm.conf \
-                '/usr/share/minos/desktop-settings/etc##xdg##pcmanfm##default##pcmanfm.conf'
+                "${package_dir}/etc##xdg##pcmanfm##default##pcmanfm.conf"
 
             #https://bugs.launchpad.net/ubuntu/+source/policykit-1/+bug/600575
             DISTRIB_CODENAME="$(busybox awk -F'=' '/DISTRIB_CODENAME/ {print $2}' /etc/lsb-release 2>&1)"
@@ -745,28 +739,22 @@ _disable_setting() {
                 #only precise
                 precise)
                     _uninstall_minos_setting \
-                        '/usr/share/minos/desktop-settings/etc##polkit-1##localauthority##50-local.d##55-storage.pkla'
+                        "${package_dir}/etc##polkit-1##localauthority##50-local.d##55-storage.pkla"
                     ;;
             esac
             ;;
 
-        qt)
-            _undiverge_element /etc/xdg/Trolltech.conf \
-                '/usr/share/minos/desktop-settings/etc##xdg##Trolltech.conf'
-            ;;
+        qt) _undiverge_element /etc/xdg/Trolltech.conf "${package_dir}/etc##xdg##Trolltech.conf" ;;
 
         redshift)
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.config##redshift.conf'
-            _recover_file_on_system_users '~/.config/redshift.conf'
+            _uninstall_element_system_users '/etc/skel/.config/redshift.conf' '~/.config/redshift.conf'
+            _uninstall_minos_setting "${package_dir}/etc##skel##.config##redshift.conf"
             ;;
 
-        slim)
-            _undiverge_element /etc/slim.conf \
-                '/usr/share/minos/desktop-settings/etc##slim.conf'
-            ;;
+        slim) _undiverge_element /etc/slim.conf "${package_dir}/etc##slim.conf" ;;
 
         urxvt)
-            for file in /usr/share/minos/desktop-settings/usr##lib##urxvt##perl##*; do
+            for file in "${package_dir}"/usr##lib##urxvt##perl##*; do
                 _uninstall_minos_setting "${file}"
             done
             #update-alternatives --set x-terminal-emulator /usr/bin/urxvt
@@ -784,13 +772,13 @@ _disable_setting() {
             ;;
 
         x11)
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##X11##Xsession.d##05minos-noerrfile'
+            _uninstall_minos_setting "${package_dir}/etc##X11##Xsession.d##05minos-noerrfile"
 
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.Xdefaults'
-            _recover_file_on_system_users '~/.Xdefaults'
+            _uninstall_element_system_users '/etc/skel/.Xdefaults' '~/.Xdefaults'
+            _uninstall_minos_setting "${package_dir}/etc##skel##.Xdefaults"
 
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.xsession'
-            _recover_file_on_system_users '~/.xsession'
+            _uninstall_element_system_users '/etc/skel/.xsession' '~/.xsession'
+            _uninstall_minos_setting "${package_dir}/etc##skel##.xsession"
 
             for user in ${users}; do
                 su "${user}" -c "test -f ~/.minos/not_override" && continue
@@ -799,10 +787,10 @@ _disable_setting() {
             ;;
 
         xdg-user-dirs)
-            _undiverge_element /etc/xdg/user-dirs.conf \
-                '/usr/share/minos/desktop-settings/etc##xdg##user-dirs.conf'
-            _uninstall_minos_setting '/usr/share/minos/desktop-settings/etc##skel##.config##user-dirs.dirs'
-            _recover_file_on_system_users '~/.config/user-dirs.dirs'
+            _undiverge_element /etc/xdg/user-dirs.conf "${package_dir}/etc##xdg##user-dirs.conf"
+
+            _uninstall_element_system_users '/etc/skel/.config/user-dirs.dirs' '~/.config/user-dirs.dirs'
+            _uninstall_minos_setting "${package_dir}/etc##skel##.config##user-dirs.dirs"
     esac
 }
 
@@ -832,11 +820,11 @@ case "${1}" in
             _disable_setting "${not_selected_setting}"
         done
 
-        #leave apt daemon running behind to install/remove additional software
-        _apt_daemon
+        #apply apt/dpkg changes
+        _apt_run
         ;;
 
-    remove|purge) #abusing postinst to avoid repeating code in postrm
+    remove) #abusing postinst to avoid repeating code in prerm
         if [ "${DEBCONFEXISTS}" = "true" ]; then
             #get default settings
             db_metaget "${package}"/settings Choices
@@ -849,8 +837,9 @@ case "${1}" in
             _disable_setting "${setting}"
         done
         ;;
-    abort-upgrade|abort-deconfigure|abort-remove)
-        ;;
+
+    abort-upgrade|abort-deconfigure|abort-remove) : ;;
+
     *)
         printf "%s\\n" "${0} called with unknown argument \`${1}'" 1>&2
         exit 1

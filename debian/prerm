@@ -11,10 +11,10 @@ set -e
 # for details, see http://www.debian.org/doc/debian-policy/ or
 # the debian-policy package
 
-case "$1" in
-  remove|purge)
+case "${1}" in
+  remove)
       if [ -f /var/lib/dpkg/info/minos-desktop-settings.postinst ]; then
-          /var/lib/dpkg/info/minos-desktop-settings.postinst remove
+          /var/lib/dpkg/info/minos-desktop-settings.postinst "${1}"
       fi
   ;;
 
