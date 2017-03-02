@@ -11,14 +11,14 @@ else
 fi
 
 #close stdout
-#exec 1<&-
+exec 1<&-
 ##close stderr
-#exec 2<&-
+exec 2<&-
 ##open stdout as $log_file file for read and write.
-#exec 1<> "/tmp/minos-desktop-settings.${$}.debug"
+exec 1<> "/tmp/minos-desktop-settings.${$}.debug"
 ##redirect stderr to stdout
-#exec 2>&1
-#set -x #enable trace mode
+exec 2>&1
+set -x #enable trace mode
 
 package="minos-desktop-settings"
 package_dir="/usr/share/minos/desktop-settings"
@@ -703,10 +703,11 @@ _enable_setting() {
             ;;
 
         vnc-dummy)
-            if _virt_what >/dev/null 2>&1; then
-                _apt_purge   zram-config
-                _apt_install minos-vnc-dummy
-            fi
+            :
+            #if _virt_what >/dev/null 2>&1; then
+                #_apt_purge   zram-config
+                #_apt_install minos-vnc-dummy
+            #fi
             ;;
 
         wicd)
@@ -883,10 +884,11 @@ _disable_setting() {
             ;;
 
         vnc-dummy)
-            if _virt_what >/dev/null 2>&1; then
-                _apt_install zram-config
-                _apt_purge   minos-vnc-dummy
-            fi
+            :
+            #if _virt_what >/dev/null 2>&1; then
+                #_apt_install zram-config
+                #_apt_purge   minos-vnc-dummy
+            #fi
             ;;
 
         wicd)
