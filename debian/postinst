@@ -438,6 +438,22 @@ _apt_run() {
     _dpkg_sync_status_db
 }
 
+_virt_what() { #print used virtualization system
+    if [ -d /proc/vz ] && [ ! -d /proc/bc ]; then
+        printf "openvz"
+    elif grep 'UML' /proc/cpuinfo >/dev/null 2>&1; then
+        printf "uml"
+    elif [ -f /proc/xen/capabilities ]; then
+        printf "xen"
+    elif grep 'QEMU' /proc/cpuinfo >/dev/null 2>&1; then
+        printf "qemu"
+    elif grep 'Hypervisor detected' /var/log/dmesg >/dev/null 2>&1; then
+        awk '/Hypervisor detected/{print tolower($NF); exit;}' /var/log/dmesg
+    else
+        return 1
+    fi
+}
+
 _enable_setting() {
     case "${1}" in
         app-desktop)
@@ -686,6 +702,13 @@ _enable_setting() {
             update-alternatives --set x-terminal-emulator /usr/bin/urxvt
             ;;
 
+        vnc-dummy)
+            if _virt_what >/dev/null 2>&1; then
+                _apt_purge   zram-config
+                _apt_install minos-vnc-dummy
+            fi
+            ;;
+
         wicd)
             _ensure_setting_is_set "auto lo"                /etc/network/interfaces
             _ensure_setting_is_set "iface lo inet loopback" /etc/network/interfaces
@@ -859,6 +882,13 @@ _disable_setting() {
             #update-alternatives --set x-terminal-emulator /usr/bin/urxvt
             ;;
 
+        vnc-dummy)
+            if _virt_what >/dev/null 2>&1; then
+                _apt_install zram-config
+                _apt_purge   minos-vnc-dummy
+            fi
+            ;;
+
         wicd)
             #re-enable network-manager
             if [ -f /etc/init/network-manager.conf-disabled ]; then
@@ -946,4 +976,5 @@ case "${1}" in
 esac
 
 #DEBHELPER#
+
 exit 0
