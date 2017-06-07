@@ -4,11 +4,11 @@ Upstream-Contact: https://github.com/minos-org/minos-desktop-settings
 Source: https://github.com/minos-org/minos-desktop-settings/archive/master.zip
 
 Files: *
-Copyright: Copyright (c) 2017, Javier López <chilicuil@ubuntu.com>
+Copyright: Copyright (c) 2017, Javier López <m@javier.io>
 License: GPL-3
 
 Files: debian/*
-Copyright: Copyright (c) 2017, Javier López <chilicuil@ubuntu.com>
+Copyright: Copyright (c) 2017, Javier López <m@javier.io>
 License: GPL-3
 
 License: GPL-3
