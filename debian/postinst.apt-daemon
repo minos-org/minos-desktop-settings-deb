@@ -51,7 +51,7 @@ _undiverge_element() {
         grep -xFq "diversion of ${_diverge__orig} to ${diverge_dir}/${_diverge__backup} by ${package}"; then
         #busybox grep don't support the -x flag in old releases
         busybox rm -rf "${_diverge__orig}"
-        dpkg-divert --package "${package}" --rename --remove "${_diverge__orig}"
+        dpkg-divert --package "${package}" --remove "${_diverge__orig}"
         busybox rmdir "${diverge_dir}" 2>/dev/null || :
     fi
 }
@@ -824,7 +824,7 @@ case "${1}" in
         _apt_run
         ;;
 
-    remove) #abusing postinst to avoid repeating code in prerm
+    upgrade|remove) #abusing postinst to avoid repeating code in prerm
         if [ "${DEBCONFEXISTS}" = "true" ]; then
             #get default settings
             db_metaget "${package}"/settings Choices
