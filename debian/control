@@ -12,7 +12,7 @@ Package: minos-desktop-settings
 Architecture: all
 Depends: ${shlibs:Depends}, ${misc:Depends}, debconf, login, busybox-static
 #                                                     login => because of /bin/su
-Recommends: minos-artwork-core, minos-artwork-extra, minos-core-settings, minos-tools, minos-tools-extra, slim-theme-minos-login
+Recommends: minos-artwork, minos-artwork-extra, minos-core-settings, minos-core-tools, minos-desktop-tools, slim-theme-minos-login
 Description: Minos desktop settings
  This package provides the settings which gives to minos its identity. It's
  intended to be installed in desktop environments.
