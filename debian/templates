@@ -1,19 +1,11 @@
 Template: minos-desktop-settings/settings
 Type: multiselect
-Choices: app-desktop, app-purge, compton, dbus-power, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, urxvt, vnc-dummy, wicd, x11, xdg-user-dirs
-Default: app-desktop, app-purge, compton, dbus-power, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, urxvt, vnc-dummy, wicd, x11, xdg-user-dirs
+Choices: compton, dbus-power, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, urxvt, vnc-dummy, wicd, x11, xdg-user-dirs
+Default: compton, dbus-power, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, urxvt, vnc-dummy, wicd, x11, xdg-user-dirs
 Description: Select the settings to be applied.
  Minos behavor requires additional settings to fullfill the minos
  experience, all add-ons can be enabled or disabled by marking the
  following list
- .
- [*] app-desktop: install additional apt packages (Experimental).
-     Eg, ~/.minos/config
-     app-desktop emacs aria2 curl
- .
- [*] app-purge: remove apt packages (Experimental).
-     Eg, ~/.minos/config
-     app-purge xinetd sasl2-bin sendmail sendmail-base sendmail-bin sensible-mda
  .
  [*] compton: compositor for X11. Performance oriented settings (Optional).
  .

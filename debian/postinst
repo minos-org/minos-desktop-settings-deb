@@ -456,71 +456,71 @@ _virt_what() { #print used virtualization system
 
 _enable_setting() {
     case "${1}" in
-        app-desktop)
-            for user in ${users}; do
-                su "${user}" -c "busybox id | busybox grep '(sudo)\|(admin)\|(wheel)'" >/dev/null 2>&1 || continue
-                h="$(su "${user}" -c "echo ~" 2>/dev/null)" || continue
+        #app-desktop)
+            #for user in ${users}; do
+                #su "${user}" -c "busybox id | busybox grep '(sudo)\|(admin)\|(wheel)'" >/dev/null 2>&1 || continue
+                #h="$(su "${user}" -c "echo ~" 2>/dev/null)" || continue
 
-                userpkgs="$(busybox awk -v pattern="^app-desktop"    \
-                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
-                    "${h}/.minos/config" 2>/dev/null)"
+                #userpkgs="$(busybox awk -v pattern="^app-desktop"    \
+                    #'$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                    #"${h}/.minos/config" 2>/dev/null)"
 
-                [ -z "${userpkgs}" ] && continue
+                #[ -z "${userpkgs}" ] && continue
 
-                printf "%s\\n" "${package}: adding to the apt queue, ${user}'s defined pkgs: ${userpkgs} ..."
-                _apt_install ${userpkgs}
-            done
+                #printf "%s\\n" "${package}: adding to the apt queue, ${user}'s defined pkgs: ${userpkgs} ..."
+                #_apt_install ${userpkgs}
+            #done
 
-            #this script will be run twice on dpkg-reconfigure invocation
-            #workaround 2nd instance
-            if [ X"$(busybox readlink -f /etc/minos/config)" = X"${package_dir}/etc##minos##config" ]; then
-                change_time="$(perl -le'$,=","; print((stat shift)[9])' /etc/minos/config)"; change_time="${change_time:-0}"
-                now_time="$(busybox date '+%s')"
-                [ "$(($now_time - $change_time))" -lt "1" ] && return 0
-            fi
+            ##this script will be run twice on dpkg-reconfigure invocation
+            ##workaround 2nd instance
+            #if [ X"$(busybox readlink -f /etc/minos/config)" = X"${package_dir}/etc##minos##config" ]; then
+                #change_time="$(perl -le'$,=","; print((stat shift)[9])' /etc/minos/config)"; change_time="${change_time:-0}"
+                #now_time="$(busybox date '+%s')"
+                #[ "$(($now_time - $change_time))" -lt "1" ] && return 0
+            #fi
 
-            globalpkgs="$(busybox awk -v pattern="^app-desktop"      \
-                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
-                     /etc/minos/config 2>/dev/null)"
+            #globalpkgs="$(busybox awk -v pattern="^app-desktop"      \
+                    #'$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                     #/etc/minos/config 2>/dev/null)"
 
-            if [ -n "${globalpkgs}" ]; then
-                printf "%s\\n" "${package}: adding to the apt queue, system defined pkgs: ${globalpkgs} ..."
-                _apt_install ${globalpkgs}
-            fi
-            ;;
+            #if [ -n "${globalpkgs}" ]; then
+                #printf "%s\\n" "${package}: adding to the apt queue, system defined pkgs: ${globalpkgs} ..."
+                #_apt_install ${globalpkgs}
+            #fi
+            #;;
 
-        app-purge)
-            for user in ${users}; do
-                su "${user}" -c "busybox id | busybox grep '(sudo)\|(admin)\|(wheel)'" >/dev/null 2>&1 || continue
-                h="$(su "${user}" -c "echo ~" 2>/dev/null)" || continue
+        #app-purge)
+            #for user in ${users}; do
+                #su "${user}" -c "busybox id | busybox grep '(sudo)\|(admin)\|(wheel)'" >/dev/null 2>&1 || continue
+                #h="$(su "${user}" -c "echo ~" 2>/dev/null)" || continue
 
-                rm_userpkgs="$(busybox awk -v pattern="^app-purge"   \
-                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
-                    "${h}/.minos/config" 2>/dev/null)"
+                #rm_userpkgs="$(busybox awk -v pattern="^app-purge"   \
+                    #'$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                    #"${h}/.minos/config" 2>/dev/null)"
 
-                [ -z "${rm_userpkgs}" ] && continue
+                #[ -z "${rm_userpkgs}" ] && continue
 
-                printf "%s\\n" "${package}: removing from the apt queue, ${user}'s defined pkgs: ${rm_userpkgs} ..."
-                _apt_purge ${rm_userpkgs}
-            done
+                #printf "%s\\n" "${package}: removing from the apt queue, ${user}'s defined pkgs: ${rm_userpkgs} ..."
+                #_apt_purge ${rm_userpkgs}
+            #done
 
-            #this script will be run twice on dpkg-reconfigure invocation
-            #workaround 2nd instance
-            if [ X"$(busybox readlink -f /etc/minos/config)" = X"${package_dir}/etc##minos##config" ]; then
-                change_time="$(perl -le'$,=","; print((stat shift)[9])' /etc/minos/config)"; change_time="${change_time:-0}"
-                now_time="$(busybox date '+%s')"
-                [ "$(($now_time - $change_time))" -lt "1" ] && return 0
-            fi
+            ##this script will be run twice on dpkg-reconfigure invocation
+            ##workaround 2nd instance
+            #if [ X"$(busybox readlink -f /etc/minos/config)" = X"${package_dir}/etc##minos##config" ]; then
+                #change_time="$(perl -le'$,=","; print((stat shift)[9])' /etc/minos/config)"; change_time="${change_time:-0}"
+                #now_time="$(busybox date '+%s')"
+                #[ "$(($now_time - $change_time))" -lt "1" ] && return 0
+            #fi
 
-            rm_globalpkgs="$(busybox awk -v pattern="^app-purge"     \
-                    '$0 ~ pattern {$1=""; print substr($0,2); exit}' \
-                     /etc/minos/config 2>/dev/null)"
+            #rm_globalpkgs="$(busybox awk -v pattern="^app-purge"     \
+                    #'$0 ~ pattern {$1=""; print substr($0,2); exit}' \
+                     #/etc/minos/config 2>/dev/null)"
 
-            if [ -n "${rm_globalpkgs}" ]; then
-                printf "%s\\n" "${package}: removing from the apt queue, system defined pkgs: ${rm_globalpkgs} ..."
-                _apt_purge ${rm_globalpkgs}
-            fi
-            ;;
+            #if [ -n "${rm_globalpkgs}" ]; then
+                #printf "%s\\n" "${package}: removing from the apt queue, system defined pkgs: ${rm_globalpkgs} ..."
+                #_apt_purge ${rm_globalpkgs}
+            #fi
+            #;;
 
         compton) _install_minos_setting "${package_dir}/etc##xdg##compton.conf" ;;
 
@@ -754,7 +754,7 @@ _enable_setting() {
 
 _disable_setting() {
     case "${1}" in
-        app-desktop|app-purge) : ;; #what would be the reverse process?
+        #app-desktop|app-purge) : ;; #what would be the reverse process?
 
         compton) _uninstall_minos_setting "${package_dir}/etc##xdg##compton.conf" ;;
 
