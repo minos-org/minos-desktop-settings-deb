@@ -952,7 +952,7 @@ case "${1}" in
         done
 
         #apply apt/dpkg changes
-        _apt_run
+        #_apt_run
         ;;
 
     upgrade|remove) #abusing postinst to avoid repeating code in prerm
