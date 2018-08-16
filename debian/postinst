@@ -568,6 +568,9 @@ _enable_setting() {
                 h="$(su "${user}" -c "echo ~" 2>/dev/null)"      || continue
                 busybox sed -i "s/muser/${user}/" "${h}/.gtkrc-2.0"
             done
+
+            _install_minos_setting "${package_dir}/etc##skel##.config##gtk-3.0##settings.ini"
+            _install_element_system_users '/etc/skel/.config/gtk-3.0/settings.ini' '~/.config/gtk-3.0/settings.ini'
             ;;
 
         groups)
