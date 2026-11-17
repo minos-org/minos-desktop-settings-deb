@@ -14,6 +14,28 @@ fi
 case "${1}" in
     configure)
         if [ "$DEBCONFEXISTS" = "true" ]; then
+            #versions are 1:{build time}+git{revno}-minos: a module that came after the version upgraded from
+            #was built is turned on once, in the answer that version stored. splash came on 2026-11-18,
+            #connman after every version published on 2026-11-19 before it. debconf runs this script as
+            #"configure" before every postinst, whatever it was called for: its second word is a version only
+            #on an upgrade (for a trigger it is the trigger's name, which dpkg would take for a version older
+            #than any)
+            added=""
+            for module_since in splash:1:202611180000 connman:1:202611190500; do
+                if dpkg --validate-version "${2}" >/dev/null 2>&1 && \
+                    dpkg --compare-versions "${2}" lt "${module_since#*:}"; then
+                    added="${added}, ${module_since%%:*}"
+                fi
+            done
+            if [ -n "${added}" ]; then
+                db_get minos-desktop-settings/settings
+                selected=", ${RET}${added}, "; settings=""
+                db_metaget minos-desktop-settings/settings Choices
+                for setting in $(printf "%s\\n" "${RET}" | tr -d ','); do
+                    case "${selected}" in *", ${setting}, "*) settings="${settings:+${settings}, }${setting}" ;; esac
+                done
+                db_set minos-desktop-settings/settings "${settings}"
+            fi
             #ask questions
             db_input medium minos-desktop-settings/settings || true
             #show interface

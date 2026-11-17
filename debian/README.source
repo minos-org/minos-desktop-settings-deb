@@ -14,7 +14,7 @@ This repository contain the settings that give to minos its identify, it targets
  - `git`: default theme plus aliases
  - `i3`: default theme, shortcuts, statusbar, etc
  - `compton`: performance oriented settings
- - `mplayer`: fifo controller
+ - `mplayer`: default settings; the fifo `player-ctrl` drives is each user's, made at login by the autostart
  - `ncmpcpp`: default theme
  - `pcmanfm`: default settings
  - `irssi`: default theme

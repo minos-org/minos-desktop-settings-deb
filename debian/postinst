@@ -10,50 +10,89 @@ else
     export DEBCONFEXISTS
 fi
 
-#close stdout
-exec 1<&-
-##close stderr
-exec 2<&-
-##open stdout as $log_file file for read and write.
-exec 1<> "/tmp/minos-desktop-settings.${$}.debug"
-##redirect stderr to stdout
-exec 2>&1
-set -x #enable trace mode
-
 package="minos-desktop-settings"
 package_dir="/usr/share/minos/desktop-settings"
 diverge_dir="${package_dir}/diverge"
+#the modules connman and logind-ignore-lid are these drop-ins, linked: each is on while its link is there
+resolved_dropin="/etc/systemd/resolved.conf.d/minos-connman.conf"
+connmand="/usr/sbin/connmand"
+logind_dropin="/etc/systemd/logind.conf.d/minos-ignore-lid.conf"
 
 users="$(busybox cat /etc/passwd | busybox awk -F: '{if ($3 >= 1000 && $3 < 60000) print $1}')"
+
+_place_dpkg_new() { #file, where it goes, its package's name for it => FILE.dpkg-new, a conffile, follows it
+    #dpkg unpacks a conffile as .dpkg-new under the name it has then, and installs it when it configures
+    #the package, under the name it has by then: a divert added or removed in between (a new install
+    #configures this package before the ones it diverts) would leave it behind, never installed
+    [ -f "${1}.dpkg-new" ] || return 0
+    _place__owner="$(dpkg-query -S "${3}" 2>/dev/null | busybox grep -v '^diversion ' | busybox cut -d: -f1)"
+    if dpkg-query -W -f='${Status}\n' "${_place__owner}" 2>/dev/null | \
+        busybox grep -qE ' (installed|triggers-awaited|triggers-pending)$'; then
+        #configured already: dpkg passed over it, and it is the file the package shipped
+        [ -e "${2}" ] || [ -L "${2}" ] || busybox mv "${1}.dpkg-new" "${2}"
+    elif [ ! -e "${2}.dpkg-new" ]; then
+        busybox mv "${1}.dpkg-new" "${2}.dpkg-new"
+    fi
+}
 
 _diverge_element() {
     _diverge__orig="${1}"
     _diverge__new="${2}"
-    _diverge__backup="$(printf "%s\\n" "${_diverge__orig}" | busybox sed 's:/:##:g')"
+    _diverge__backup="${diverge_dir}/$(printf "%s\\n" "${_diverge__orig}" | busybox sed 's:/:##:g')"
 
     if ! LC_ALL=C dpkg-divert --list "${package}" | \
-        grep -xFq "diversion of ${_diverge__orig} to ${diverge_dir}/${_diverge__backup} by ${package}"; then
+        grep -xFq "diversion of ${_diverge__orig} to ${_diverge__backup} by ${package}"; then
         #busybox grep don't support the -x flag in old releases
         busybox mkdir -p "${diverge_dir}"
         dpkg-divert --package "${package}" --rename --add \
-            --divert "${diverge_dir}/${_diverge__backup}" "${_diverge__orig}"
+            --divert "${_diverge__backup}" "${_diverge__orig}"
 
         busybox ln -s "${_diverge__new}" "${_diverge__orig}" || :
     fi
+    _place_dpkg_new "${_diverge__orig}" "${_diverge__backup}" "${_diverge__orig}"
 }
 
 _undiverge_element() {
     _diverge__orig="${1}"
-    _diverge__new="${2}"
-    _diverge__backup="$(printf "%s\\n" "${_diverge__orig}" | busybox sed 's:/:##:g')"
+    _diverge__backup="${diverge_dir}/$(printf "%s\\n" "${_diverge__orig}" | busybox sed 's:/:##:g')"
 
     if LC_ALL=C dpkg-divert --list "${package}" | \
-        grep -xFq "diversion of ${_diverge__orig} to ${diverge_dir}/${_diverge__backup} by ${package}"; then
+        grep -xFq "diversion of ${_diverge__orig} to ${_diverge__backup} by ${package}"; then
         #busybox grep don't support the -x flag in old releases
         busybox rm -rf "${_diverge__orig}"
-        dpkg-divert --package "${package}" --remove "${_diverge__orig}"
+        #--rename puts the package's file back in its place: dpkg up to 1.23 leaves it diverted without it
+        dpkg-divert --package "${package}" --rename --remove "${_diverge__orig}"
+        _place_dpkg_new "${_diverge__backup}" "${_diverge__orig}" "${_diverge__orig}"
         busybox rmdir "${diverge_dir}" 2>/dev/null || :
     fi
+    _place_dpkg_new "${_diverge__orig}" "${_diverge__orig}" "${_diverge__orig}"
+}
+
+_restore_undiverted() { #what lies in the diverge directory with no divert of this package over it goes back
+    #the diverts used to come off without --rename: turning a module off, upgrading and removing left the
+    #package's file in the diverge directory and nothing in its place
+    for _restore__file in "${diverge_dir}"/*; do
+        #a package may ship a link (desktop-file-utils' defaults.list, up to 22.04), whatever it points to
+        [ -f "${_restore__file}" ] || [ -L "${_restore__file}" ] || continue
+        _restore__name="$(busybox basename "${_restore__file}")"
+        _restore__orig="$(printf "%s\\n" "${_restore__name%.dpkg-new}" | busybox sed 's:##:/:g')"
+        LC_ALL=C dpkg-divert --list "${package}" | \
+            grep -xFq "diversion of ${_restore__orig} to ${diverge_dir}/${_restore__name%.dpkg-new} by ${package}" && continue
+        case "${_restore__name}" in
+            *.dpkg-new) _place_dpkg_new "${diverge_dir}/${_restore__name%.dpkg-new}" "${_restore__orig}" "${_restore__orig}" ;;
+            *)  case "$(busybox readlink "${_restore__orig}" 2>/dev/null)" in
+                    "${package_dir}"/*) busybox rm -f "${_restore__orig}" ;;
+                esac
+                if [ ! -e "${_restore__orig}" ] && [ ! -L "${_restore__orig}" ] && \
+                   [ -d "$(busybox dirname "${_restore__orig}")" ]; then
+                    busybox mv "${_restore__file}" "${_restore__orig}"
+                else
+                    printf "%s\\n" "${package}: ${_restore__orig} is there already, ${_restore__file} is left as it is"
+                fi
+                ;;
+        esac
+    done
+    busybox rmdir "${diverge_dir}" 2>/dev/null || :
 }
 
 _install_minos_setting() {
@@ -246,16 +285,6 @@ _dpkg_sync_status_db() {
     _dpkg_sync_status_db_script_generator() {
         printf "%s\\n" "#!/bin/sh"
         printf "%s\\n" "#autogenerated by ${package}: $(date +%d-%m-%Y:%H:%M)"
-        printf "\\n"
-        printf "%s\\n" '##close stdout'
-        printf "%s\\n" '#exec 1<&-'
-        printf "%s\\n" '##close stderr'
-        printf "%s\\n" '#exec 2<&-'
-        printf "%s\\n" '##open stdout as $log_file file for read and write.'
-        printf "%s\\n" "#exec 1<> /tmp/${package}.\${$}.debug"
-        printf "%s\\n" '##redirect stderr to stdout'
-        printf "%s\\n" '#exec 2>&1'
-        printf "%s\\n" '#set -x #enable trace mode'
         printf "\\n"
         printf "%s\\n" "while fuser /var/lib/dpkg/lock >/dev/null 2>&1; do sleep 1; done"
         printf "\\n"
@@ -454,6 +483,16 @@ _virt_what() { #print used virtualization system
     fi
 }
 
+_update_grub() { #GRUB writes its configuration again, where it is the boot loader
+    if command -v update-grub >/dev/null 2>&1; then
+        update-grub
+    else
+        #a container, or a kernel started by another boot loader: the command line stays as it is, and a
+        #GRUB installed later reads /etc/default/grub.d when its own postinst runs update-grub
+        printf "%s\\n" "${package}: no update-grub, the kernel's command line is left as it is"
+    fi
+}
+
 _enable_setting() {
     case "${1}" in
         #app-desktop)
@@ -524,9 +563,18 @@ _enable_setting() {
 
         compton) _install_minos_setting "${package_dir}/etc##xdg##compton.conf" ;;
 
-        dbus-power)
-            _install_minos_setting \
-            "${package_dir}/etc##polkit-1##localauthority##50-local.d##org.freedesktop.consolekit.pkla"
+        connman)
+            #resolved asks connman's DNS proxy, which knows the name servers of the network connman manages;
+            #resolved reads the file when it starts, so it starts again when the file arrives, and only then.
+            #connman comes with minos-desktop, not with this package: without it nothing answers on
+            #127.0.0.1, so the drop-in waits for it (debian/triggers runs this again when connman comes or goes)
+            if [ ! -x "${connmand}" ]; then
+                printf "%s\\n" "${package}: connman is not installed, resolved is left as it is"
+                _disable_setting connman
+            elif [ ! -e "${resolved_dropin}" ] && [ ! -L "${resolved_dropin}" ]; then
+                _install_minos_setting "${package_dir}/etc##systemd##resolved.conf.d##minos-connman.conf"
+                systemctl try-restart systemd-resolved.service
+            fi
             ;;
 
         dev-null)
@@ -625,9 +673,12 @@ _enable_setting() {
             ;;
 
         logind-ignore-lid)
-            #http://askubuntu.com/a/361087
-            _diverge_element /etc/systemd/logind.conf "${package_dir}/etc##systemd##logind.conf"
-            service systemd-logind restart
+            #a drop-in over Ubuntu's logind.conf; logind reads it when it starts, so it starts again when the
+            #file arrives, and only then
+            if [ ! -e "${logind_dropin}" ] && [ ! -L "${logind_dropin}" ]; then
+                _install_minos_setting "${package_dir}/etc##systemd##logind.conf.d##minos-ignore-lid.conf"
+                systemctl try-restart systemd-logind.service
+            fi
             ;;
 
         mime)
@@ -674,18 +725,23 @@ _enable_setting() {
             _diverge_element /etc/xdg/pcmanfm/default/pcmanfm.conf \
                 "${package_dir}/etc##xdg##pcmanfm##default##pcmanfm.conf"
 
-            #https://bugs.launchpad.net/ubuntu/+source/policykit-1/+bug/600575
-            DISTRIB_CODENAME="$(busybox awk -F'=' '/DISTRIB_CODENAME/ {print $2}' /etc/lsb-release 2>&1)"
-            case "${DISTRIB_CODENAME}" in
-                #only precise
-                precise)
-                    _install_minos_setting \
-                        "${package_dir}/etc##polkit-1##localauthority##50-local.d##55-storage.pkla"
-                    ;;
-            esac
+            #mounting the machine's own disks without a password, for the group sudo: one rule in the
+            #two forms polkit reads, .pkla up to 22.04 (polkit 0.105) and JavaScript from 24.04 on
+            #(polkit 121 and later, which read .pkla only with polkitd-pkla); each release passes over
+            #the form it does not read
+            _install_minos_setting \
+                "${package_dir}/etc##polkit-1##localauthority##50-local.d##55-minos-storage.pkla" \
+                "${package_dir}/etc##polkit-1##rules.d##55-minos-storage.rules"
             ;;
 
-        qt) _diverge_element /etc/xdg/Trolltech.conf "${package_dir}/etc##xdg##Trolltech.conf" ;;
+        qt)
+            #Qt 4 reads Trolltech.conf; Qt 5 and 6 take the palette and font from qt5ct and qt6ct
+            _diverge_element /etc/xdg/Trolltech.conf "${package_dir}/etc##xdg##Trolltech.conf"
+            for qtct in qt5ct qt6ct; do
+                _install_minos_setting "${package_dir}/etc##skel##.config##${qtct}##${qtct}.conf"
+                _install_element_system_users "/etc/skel/.config/${qtct}/${qtct}.conf" "~/.config/${qtct}/${qtct}.conf"
+            done
+            ;;
 
         redshift)
             _install_minos_setting "${package_dir}/etc##skel##.config##redshift.conf"
@@ -696,6 +752,15 @@ _enable_setting() {
             _diverge_element /etc/slim.conf "${package_dir}/etc##slim.conf"
             busybox sed -i -e \
                 "/default_user/ s:muser:$(busybox awk -F':' '/1000:1000/ {print $1}' /etc/passwd):" /etc/slim.conf
+            ;;
+
+        splash)
+            #"quiet splash" on the kernel's command line, or plymouth never shows minos' theme; GRUB reads the
+            #file only when it writes its configuration, so it is written when the file arrives, and only then
+            if [ ! -e /etc/default/grub.d/minos-splash.cfg ] && [ ! -L /etc/default/grub.d/minos-splash.cfg ]; then
+                _install_minos_setting "${package_dir}/etc##default##grub.d##minos-splash.cfg"
+                _update_grub
+            fi
             ;;
 
         urxvt)
@@ -711,24 +776,6 @@ _enable_setting() {
                 #_apt_purge   zram-config
                 #_apt_install minos-vnc-dummy
             #fi
-            ;;
-
-        wicd)
-            _ensure_setting_is_set "auto lo"                /etc/network/interfaces
-            _ensure_setting_is_set "iface lo inet loopback" /etc/network/interfaces
-
-            for user in ${users}; do
-                usermod -a -G "netdev" "${user}"
-            done
-
-            #disable network-manager
-            if [ -f /etc/init/network-manager.conf ]; then
-                mv /etc/init/network-manager.conf /etc/init/network-manager.conf-disabled
-            fi
-
-            if [ -f /etc/xdg/autostart/nm-applet.desktop ]; then
-                mv /etc/xdg/autostart/nm-applet.desktop /etc/xdg/autostart/nm-applet.desktop.disabled
-            fi
             ;;
 
         x11)
@@ -761,9 +808,11 @@ _disable_setting() {
 
         compton) _uninstall_minos_setting "${package_dir}/etc##xdg##compton.conf" ;;
 
-        dbus-power)
-            _uninstall_minos_setting \
-            "${package_dir}/etc##polkit-1##localauthority##50-local.d##org.freedesktop.consolekit.pkla"
+        connman) #resolved goes back to the name servers networkd gives it, if any
+            if [ -e "${resolved_dropin}" ] || [ -L "${resolved_dropin}" ]; then
+                _uninstall_minos_setting "${package_dir}/etc##systemd##resolved.conf.d##minos-connman.conf"
+                systemctl try-restart systemd-resolved.service
+            fi
             ;;
 
         dev-null)
@@ -809,10 +858,11 @@ _disable_setting() {
             _uninstall_minos_setting "${package_dir}/etc##skel##.irssi"
             ;;
 
-        logind-ignore-lid)
-            #http://askubuntu.com/a/361087
-            _undiverge_element /etc/systemd/logind.conf "${package_dir}/etc##systemd##logind.conf"
-            service systemd-logind restart
+        logind-ignore-lid) #closing the lid suspends again, as Ubuntu's logind.conf says
+            if [ -e "${logind_dropin}" ] || [ -L "${logind_dropin}" ]; then
+                _uninstall_minos_setting "${package_dir}/etc##systemd##logind.conf.d##minos-ignore-lid.conf"
+                systemctl try-restart systemd-logind.service
+            fi
             ;;
 
         mime)
@@ -859,18 +909,18 @@ _disable_setting() {
             _undiverge_element /etc/xdg/pcmanfm/default/pcmanfm.conf \
                 "${package_dir}/etc##xdg##pcmanfm##default##pcmanfm.conf"
 
-            #https://bugs.launchpad.net/ubuntu/+source/policykit-1/+bug/600575
-            DISTRIB_CODENAME="$(busybox awk -F'=' '/DISTRIB_CODENAME/ {print $2}' /etc/lsb-release 2>&1)"
-            case "${DISTRIB_CODENAME}" in
-                #only precise
-                precise)
-                    _uninstall_minos_setting \
-                        "${package_dir}/etc##polkit-1##localauthority##50-local.d##55-storage.pkla"
-                    ;;
-            esac
+            _uninstall_minos_setting \
+                "${package_dir}/etc##polkit-1##localauthority##50-local.d##55-minos-storage.pkla" \
+                "${package_dir}/etc##polkit-1##rules.d##55-minos-storage.rules"
             ;;
 
-        qt) _undiverge_element /etc/xdg/Trolltech.conf "${package_dir}/etc##xdg##Trolltech.conf" ;;
+        qt)
+            _undiverge_element /etc/xdg/Trolltech.conf "${package_dir}/etc##xdg##Trolltech.conf"
+            for qtct in qt5ct qt6ct; do
+                _uninstall_element_system_users "/etc/skel/.config/${qtct}/${qtct}.conf" "~/.config/${qtct}/${qtct}.conf"
+                _uninstall_minos_setting "${package_dir}/etc##skel##.config##${qtct}##${qtct}.conf"
+            done
+            ;;
 
         redshift)
             _uninstall_element_system_users '/etc/skel/.config/redshift.conf' '~/.config/redshift.conf'
@@ -878,6 +928,15 @@ _disable_setting() {
             ;;
 
         slim) _undiverge_element /etc/slim.conf "${package_dir}/etc##slim.conf" ;;
+
+        splash) #the command line GRUB wrote before the module, given back
+            if [ -e /etc/default/grub.d/minos-splash.cfg ] || [ -L /etc/default/grub.d/minos-splash.cfg ]; then
+                busybox rm -f /etc/default/grub.d/minos-splash.cfg
+                #the directory is GRUB's (grub-common, grub2-common) and often empty: only one the module made goes
+                dpkg-query -S /etc/default/grub.d >/dev/null 2>&1 || busybox rmdir /etc/default/grub.d 2>/dev/null
+                _update_grub
+            fi
+            ;;
 
         urxvt)
             for file in "${package_dir}"/usr##lib##urxvt##perl##*; do
@@ -892,17 +951,6 @@ _disable_setting() {
                 #_apt_install zram-config
                 #_apt_purge   minos-vnc-dummy
             #fi
-            ;;
-
-        wicd)
-            #re-enable network-manager
-            if [ -f /etc/init/network-manager.conf-disabled ]; then
-                mv /etc/init/network-manager.conf-disabled /etc/init/network-manager.conf
-            fi
-
-            if [ -f /etc/xdg/autostart/nm-applet.desktop.disabled ]; then
-                mv /etc/xdg/autostart/nm-applet.desktop.disabled /etc/xdg/autostart/nm-applet.desktop
-            fi
             ;;
 
         x11)
@@ -940,6 +988,41 @@ case "${1}" in
             default_settings="${RET}"
         fi
 
+        #wicd left ubuntu in 20.04 and its module with it: give back what the module hid, as turning it off did
+        if [ -f /etc/xdg/autostart/nm-applet.desktop.disabled ]; then
+            mv /etc/xdg/autostart/nm-applet.desktop.disabled /etc/xdg/autostart/nm-applet.desktop
+        fi
+
+        #dbus-power went with ConsoleKit: logind's own polkit defaults let the user at the machine shut
+        #down, and block inhibitors are respected. Its links go, as turning it off did: the old prerm
+        #cannot take them when debconf already holds the new list of modules (apt preconfigures)
+        for link in /etc/polkit-1/localauthority/50-local.d/org.freedesktop.consolekit.pkla \
+                    /etc/polkit-1/localauthority/50-local.d/50-minos-power.pkla \
+                    /etc/polkit-1/rules.d/50-minos-power.rules; do
+            case "$(busybox readlink "${link}" 2>/dev/null)" in
+                "${package_dir}"/*) busybox rm -f "${link}" ;;
+            esac
+        done
+
+        #logind-ignore-lid diverted Ubuntu's logind.conf to a whole copy of it before it was a drop-in: the
+        #divert goes and Ubuntu's file comes back, whatever the module says now. The old module took the
+        #divert away on every upgrade without --rename, which leaves Ubuntu's file in the diverge directory
+        if LC_ALL=C dpkg-divert --list /etc/systemd/logind.conf | busybox grep -q " by ${package}\$"; then
+            case "$(busybox readlink /etc/systemd/logind.conf 2>/dev/null)" in
+                "${package_dir}"/*) busybox rm -f /etc/systemd/logind.conf ;;
+            esac
+            dpkg-divert --package "${package}" --rename --remove /etc/systemd/logind.conf
+        fi
+        case "$(busybox readlink /etc/systemd/logind.conf 2>/dev/null)" in
+            "${package_dir}"/*) busybox rm -f /etc/systemd/logind.conf ;;
+        esac
+        if [ -f "${diverge_dir}/##etc##systemd##logind.conf" ] && [ ! -e /etc/systemd/logind.conf ]; then
+            busybox mv "${diverge_dir}/##etc##systemd##logind.conf" /etc/systemd/logind.conf
+        fi
+
+        #the files the older diverts left in the diverge directory go back before the modules divert again
+        _restore_undiverted
+
         #enable selected items
         for setting in ${settings}; do
             setting="${setting%,*}" #remove ',' from tail
@@ -968,8 +1051,21 @@ case "${1}" in
         #enable selected items
         for setting in ${default_settings}; do
             setting="${setting%,*}" #remove ',' from tail
+            #an upgrade, and every dpkg-reconfigure (it runs "prerm upgrade" first), is followed by configure,
+            #which decides about these: undone here, GRUB would be written twice, and resolved and logind
+            #started again, for nothing
+            if [ "${1}" = "upgrade" ]; then
+                case "${setting}" in splash|connman|logind-ignore-lid) continue ;; esac
+            fi
             _disable_setting "${setting}"
         done
+        ;;
+
+    triggered) #connman came or went (debian/triggers): its module follows it, when it is selected
+        if [ "${DEBCONFEXISTS}" = "true" ]; then
+            db_get "${package}"/settings
+            case ", ${RET}, " in *", connman, "*) _enable_setting connman ;; esac
+        fi
         ;;
 
     abort-upgrade|abort-deconfigure|abort-remove) : ;;

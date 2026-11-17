@@ -1,7 +1,7 @@
 Template: minos-desktop-settings/settings
 Type: multiselect
-Choices: compton, dbus-power, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, urxvt, vnc-dummy, wicd, x11, xdg-user-dirs
-Default: compton, dbus-power, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, urxvt, vnc-dummy, wicd, x11, xdg-user-dirs
+Choices: compton, connman, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, splash, urxvt, vnc-dummy, x11, xdg-user-dirs
+Default: compton, connman, dev-null, gpg-agent, gtk, groups, hooks, i3, i3status, irssi, logind-ignore-lid, mime, minos, mpd, mplayer, mutt, ncmpcpp, pcmanfm, qt, redshift, slim, splash, urxvt, vnc-dummy, x11, xdg-user-dirs
 Description: Select the settings to be applied.
  Minos behavor requires additional settings to fullfill the minos
  experience, all add-ons can be enabled or disabled by marking the
@@ -9,8 +9,8 @@ Description: Select the settings to be applied.
  .
  [*] compton: compositor for X11. Performance oriented settings (Optional).
  .
- [*] dbus-power: dbus message system. Allow shutdown/reboot through dbus-send
- (Recommended).
+ [*] connman: network manager. Resolve names through connman's DNS proxy,
+ where connman is installed (Recommended).
  .
  [*] dev-null: Silent noise applications, eg: adobe, macromedia, xsession-error
  (Optional).
@@ -51,7 +51,8 @@ Description: Select the settings to be applied.
  .
  [*] ncmpcpp: mpd client. Default theme (Optional).
  .
- [*] pcmanfm: file manager. Default theme, automount (Recommended).
+ [*] pcmanfm: file manager. Default theme, automount; members of the sudo group
+ mount the machine's own disks without a password (Recommended).
  .
  [*] qt: gui toolkit. Default theme (Recommended).
  .
@@ -59,12 +60,12 @@ Description: Select the settings to be applied.
  .
  [*] slim: simple login manager. Default theme. (Recommended).
  .
+ [*] splash: boot animation. Add "quiet splash" to the kernel's command line
+ through GRUB, so plymouth shows minos' theme (Recommended).
+ .
  [*] urxvt: terminal emulator. Common plugins and default theme. (Recommended).
  .
  [*] vnc-dummy: setup a vnc service on headless servers. (Optional).
- .
- [*] wicd: network connection manager. Netdev group / loopback interface setup,
- disable network manager (Recommended).
  .
  [*] x11: x server. Default theme (Recommended).
  .

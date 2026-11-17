@@ -1,0 +1,2 @@
+#the connman module links its resolved drop-in only where connman is: it follows connman in and out
+interest-noawait /usr/sbin/connmand
